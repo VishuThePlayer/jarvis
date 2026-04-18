@@ -12,6 +12,7 @@ import { Logger } from "../observability/logger.js";
 import { JarvisOrchestrator } from "../orchestrator/index.js";
 import { HttpServer } from "../server/http-server.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { ToolRouter } from "../tools/tool-router.js";
 
 export interface Application {
     start(): Promise<void>;
@@ -33,6 +34,7 @@ export async function createApplication(): Promise<Application> {
     });
     const tools = new ToolRegistry({ config, logger });
     const models = new ModelProviderRegistry({ config, logger });
+    const toolRouter = new ToolRouter({ config, logger, models });
     const agents = new AgentRegistry(new JarvisAgent(config));
     const orchestrator = new JarvisOrchestrator({
         config,
@@ -41,6 +43,7 @@ export async function createApplication(): Promise<Application> {
         runs: persistence.runs,
         memory,
         tools,
+        toolRouter,
         models,
         agents,
     });

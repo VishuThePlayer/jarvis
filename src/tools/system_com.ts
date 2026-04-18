@@ -2,14 +2,20 @@ import type { Logger } from "../observability/logger.js";
 import type { AppConfig } from "../config/index.js";
 import { createId } from "../utils/id.js";
 import type { ToolCallRecord, UserRequest } from "../types/core.js";
+import type { CommandToolDescriptor } from "./contracts.js";
 
 interface SystemComToolDependencies {
     config: AppConfig;
     logger: Logger;
 }
 
-/** Slash commands: `/time`, `/sys time`, `/sys get-time` (trimmed). */
-const SYSTEM_COMMAND_RE = /^\/(?:sys\s+)?(get-time|time)$/i;
+/**
+ * Commands (trimmed):
+ * - `/time`, `/sys time`, `/sys get-time`
+ * - `//time`, `//sys time`, `//sys get-time`
+ * Telegram may append `@botname` in groups (e.g. `/time@my_bot`).
+ */
+const SYSTEM_COMMAND_RE = /^(?:\/\/|\/)(?:sys\s+)?(get-time|time)(?:@\w+)?$/i;
 
 export class SystemComTool {
     private readonly config: AppConfig;
@@ -18,6 +24,15 @@ export class SystemComTool {
     public constructor(dependencies: SystemComToolDependencies) {
         this.config = dependencies.config;
         this.logger = dependencies.logger;
+    }
+
+    public describe(): CommandToolDescriptor {
+        return {
+            name: "system-com",
+            description: "Return server local time and UTC time.",
+            command: "//time",
+            examples: ["//time", "/time", "/sys time", "/sys get-time"],
+        };
     }
 
     public shouldRun(request: UserRequest): boolean {
@@ -59,7 +74,8 @@ export class SystemComTool {
         }
 
         try {
-            const output = `Current time (server local): ${this.formatLocalTime()}`;
+            const now = new Date();
+            const output = `Time\n- local: ${this.formatLocalDateTime(now)} (UTC${this.formatUtcOffset(now)})\n- utc: ${now.toISOString()}`;
             return {
                 id: createId("tool"),
                 name: "system-com",
@@ -83,11 +99,25 @@ export class SystemComTool {
         }
     }
 
-    private formatLocalTime(): string {
-        return new Date().toLocaleTimeString("en-US", {
+    private formatLocalDateTime(date: Date): string {
+        return date.toLocaleString("en-US", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
             hour: "2-digit",
             minute: "2-digit",
             second: "2-digit",
+            hour12: false,
         });
+    }
+
+    private formatUtcOffset(date: Date): string {
+        // getTimezoneOffset() returns minutes behind UTC (e.g. PST -> 480)
+        const totalMinutes = -date.getTimezoneOffset();
+        const sign = totalMinutes >= 0 ? "+" : "-";
+        const absMinutes = Math.abs(totalMinutes);
+        const hours = String(Math.floor(absMinutes / 60)).padStart(2, "0");
+        const minutes = String(absMinutes % 60).padStart(2, "0");
+        return `${sign}${hours}:${minutes}`;
     }
 }

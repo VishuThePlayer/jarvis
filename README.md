@@ -12,6 +12,10 @@ Jarvis is now structured as a local-first, provider-agnostic assistant runtime w
 - `src/db/in-memory.ts` and `src/db/postgres/persistence.ts` provide persistence adapters (memory or Postgres).
 - `db/postgres/schema.sql` is the reference schema for Postgres (text IDs; pgvector optional).
 
+Further docs:
+- `docs/JARVIS-ARCHITECTURE.md`
+- `docs/TOOLS.md`
+
 ## Current persistence status
 
 Persistence is selected via `PERSISTENCE_DRIVER`:

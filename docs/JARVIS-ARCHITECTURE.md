@@ -204,7 +204,7 @@ On failure: `runs.complete` with status `failed` and error message; the error pr
 ### 5.5 Tools — `src/tools/registry.ts` + `src/tools/web-search.ts`
 
 - **`runPreModelTools`** runs **before** the LLM call.
-- **Web search:** DuckDuckGo instant-answer style API; gated by env and **per-channel** flags (Telegram defaults off in config). Triggered by metadata (`allowWebSearch`) or keywords such as “latest”, “news”, “search”, etc.
+- **Web search:** DuckDuckGo instant-answer style API; gated by env and **per-channel** flags (currently enabled for terminal/http/telegram in `createConfig`). Triggered by metadata (`allowWebSearch`) or keywords such as “latest”, “news”, “search”, etc.
 
 ### 5.6 Memory — `src/memory/service.ts`
 
@@ -245,7 +245,7 @@ Structured **JSON lines** to stdout with level filtering from `LOG_LEVEL`.
 - **Channels:** `ENABLE_HTTP`, `ENABLE_TERMINAL`, `ENABLE_TELEGRAM`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_POLL_INTERVAL_MS`, `TELEGRAM_LONG_POLL_TIMEOUT_SEC`.
 - **Providers:** `DEFAULT_PROVIDER`, `FALLBACK_PROVIDER`, `OPENAI_API_KEY`, **`OPENAI_BASE_URL`**, `OPENROUTER_API_KEY`.
 - **Models:** `DEFAULT_MODEL`, `FAST_MODEL`, `REASONING_MODEL`, `EMBEDDING_MODEL`, `FALLBACK_MODEL`.
-- **Tools:** `ENABLE_WEB_SEARCH`, `ALLOW_WEB_SEARCH_BY_DEFAULT`, `WEB_SEARCH_MAX_RESULTS`.
+- **Tools:** `ENABLE_WEB_SEARCH`, `ALLOW_WEB_SEARCH_BY_DEFAULT`, `WEB_SEARCH_MAX_RESULTS`, `ENABLE_SYSTEM_COM`, `ENABLE_TOOL_ROUTER`.
 - **Memory:** `ENABLE_MEMORY`, `AUTO_STORE_MEMORY`, `MEMORY_RETRIEVAL_LIMIT`, `MEMORY_SUMMARY_TRIGGER_MESSAGES`.
 - **Persistence:** `PERSISTENCE_DRIVER`, `DATABASE_URL`.
 
@@ -258,7 +258,7 @@ See `src/config/index.ts` and `.env.example` for defaults.
 1. **`POST /chat/stream`** does not stream LLM tokens; it wraps the same final payload in SSE.
 2. **Local provider** is for dev/offline; it is not a full remote LLM.
 3. **OpenAI provider** + **`OPENAI_BASE_URL`** is the supported path for **third-party OpenAI-compatible** APIs.
-4. **Telegram** has web search disabled by default in `createConfig` (`perChannel.telegram: false`).
+4. **Telegram** currently has web search enabled in `createConfig` (`perChannel.telegram: true`).
 
 ---
 

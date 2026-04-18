@@ -5,6 +5,7 @@ import type { MemoryService } from "../memory/service.js";
 import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import type { ToolRouter } from "../tools/tool-router.js";
 import type {
     AssistantResponse,
     ConversationRecord,
@@ -36,6 +37,7 @@ interface OrchestratorDependencies {
     runs: RunRepository;
     memory: MemoryService;
     tools: ToolRegistry;
+    toolRouter: ToolRouter;
     models: ModelProviderRegistry;
     agents: AgentRegistry;
 }
@@ -47,6 +49,7 @@ export class JarvisOrchestrator implements Orchestrator {
     private readonly runs: RunRepository;
     private readonly memory: MemoryService;
     private readonly tools: ToolRegistry;
+    private readonly toolRouter: ToolRouter;
     private readonly models: ModelProviderRegistry;
     private readonly agents: AgentRegistry;
 
@@ -57,6 +60,7 @@ export class JarvisOrchestrator implements Orchestrator {
         this.runs = dependencies.runs;
         this.memory = dependencies.memory;
         this.tools = dependencies.tools;
+        this.toolRouter = dependencies.toolRouter;
         this.models = dependencies.models;
         this.agents = dependencies.agents;
     }
@@ -114,11 +118,20 @@ export class JarvisOrchestrator implements Orchestrator {
             startedAt: new Date(),
         };
 
-            await this.runs.create(runRecord);
-            await this.conversations.appendMessage(userMessage);
+        await this.runs.create(runRecord);
+        await this.conversations.appendMessage(userMessage);
 
         try {
-            const commandToolCall = await this.tools.tryRunCommand(request);
+            let commandToolCall = await this.tools.tryRunCommand(request);
+
+            if (!commandToolCall) {
+                const availableCommandTools = this.tools.listAvailableCommandTools(request.channel);
+                const route = await this.toolRouter.routeCommandTool(request, availableCommandTools);
+                if (route) {
+                    commandToolCall = await this.tools.tryRunCommand({ ...request, message: route.command });
+                }
+            }
+
             if (commandToolCall) {
                 const toolCalls = [commandToolCall];
                 await this.persistToolMessages(conversation, request, toolCalls);

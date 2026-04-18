@@ -81,6 +81,11 @@ export interface AppConfig {
             enabled: boolean;
             perChannel: Record<ChannelKind, boolean>;
         };
+        toolRouter: {
+            enabled: boolean;
+            perChannel: Record<ChannelKind, boolean>;
+        };
+        // tool-scaffold:insert:tools-type
     };
     memory: {
         enabled: boolean;
@@ -120,6 +125,8 @@ const envSchema = z.object({
     ALLOW_WEB_SEARCH_BY_DEFAULT: envBoolean.optional().default(true),
     WEB_SEARCH_MAX_RESULTS: z.coerce.number().int().positive().max(10).default(5),
     ENABLE_SYSTEM_COM: envBoolean.optional().default(false),
+    ENABLE_TOOL_ROUTER: envBoolean.optional().default(false),
+    // tool-scaffold:insert:env
     ENABLE_MEMORY: envBoolean.optional().default(true),
     AUTO_STORE_MEMORY: envBoolean.optional().default(true),
     MEMORY_RETRIEVAL_LIMIT: z.coerce.number().int().positive().max(10).default(5),
@@ -198,6 +205,15 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
                     telegram: true,
                 },
             },
+            toolRouter: {
+                enabled: parsed.ENABLE_TOOL_ROUTER,
+                perChannel: {
+                    terminal: true,
+                    http: true,
+                    telegram: true,
+                },
+            },
+            // tool-scaffold:insert:tools-value
         },
         memory: {
             enabled: parsed.ENABLE_MEMORY,
