@@ -15,10 +15,40 @@ interface ToolRouterDependencies {
     models: ModelProviderRegistry;
 }
 
-function looksLikeTimeQuestion(message: string): boolean {
-    return /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b/i.test(
-        message,
-    );
+function extractTimeIntent(message: string): { place?: string } | null {
+    const cleaned = message.trim();
+    if (!cleaned) {
+        return null;
+    }
+
+    const normalizePlace = (raw: string) =>
+        raw
+            .trim()
+            .replace(/^[\s:,-]+/, "")
+            .replace(/[?.!]+$/, "")
+            .trim();
+
+    // what time is it (in X)?
+    const inMatch =
+        cleaned.match(
+            /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b\s*(?:in|at)\s+(.+)$/i,
+        ) ??
+        cleaned.match(/\b(?:time)\b\s*(?:in|at)\s+(.+)$/i);
+
+    if (inMatch?.[1]) {
+        const place = normalizePlace(inMatch[1]);
+        return place ? { place } : {};
+    }
+
+    if (
+        /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b/i.test(
+            cleaned,
+        )
+    ) {
+        return {};
+    }
+
+    return null;
 }
 
 function extractJsonObject(text: string): unknown | null {
@@ -96,13 +126,21 @@ export class ToolRouter {
             return null;
         }
 
-        if (availableTools.length === 0) {
+        const routableTools = availableTools.filter((tool) => tool.autoRoute);
+        if (routableTools.length === 0) {
             return null;
         }
 
-        const timeTool = availableTools.find((tool) => tool.name === "system-com");
-        if (timeTool && looksLikeTimeQuestion(request.message)) {
-            return { tool: timeTool.name, command: timeTool.command };
+        const timeTool = routableTools.find((tool) => tool.name === "system-com");
+        const timeIntent = timeTool ? extractTimeIntent(request.message) : null;
+        if (timeTool && timeIntent) {
+            const command = timeIntent.place ? `${timeTool.command} ${timeIntent.place}` : timeTool.command;
+            return { tool: timeTool.name, command };
+        }
+
+        // Avoid an extra model call when we do not have a real choice.
+        if (routableTools.length < 2) {
+            return null;
         }
 
         const preferredProvider = this.config.providers.defaultProvider;
@@ -118,7 +156,7 @@ export class ToolRouter {
             return null;
         }
 
-        const toolsText = availableTools
+        const toolsText = routableTools
             .map((tool) => {
                 const examples = tool.examples.length > 0 ? `\nexamples:\n${tool.examples.map((ex) => `- ${ex}`).join("\n")}` : "";
                 return `tool: ${tool.name}\ncommand: ${tool.command}\ndescription: ${tool.description}${examples}`;
@@ -169,8 +207,17 @@ export class ToolRouter {
                 return null;
             }
 
-            const allowed = new Set(availableTools.map((tool) => tool.name));
+            const allowed = new Set(routableTools.map((tool) => tool.name));
             if (!allowed.has(route.tool)) {
+                return null;
+            }
+
+            const selected = routableTools.find((tool) => tool.name === route.tool);
+            if (!selected) {
+                return null;
+            }
+
+            if (!route.command.toLowerCase().startsWith(selected.command.toLowerCase())) {
                 return null;
             }
 
@@ -184,4 +231,3 @@ export class ToolRouter {
         }
     }
 }
-

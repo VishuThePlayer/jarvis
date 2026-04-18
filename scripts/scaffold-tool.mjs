@@ -123,6 +123,7 @@ const toolTemplate = `import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
 import type { ToolCallRecord, UserRequest } from "../types/core.js";
 import { createId } from "../utils/id.js";
+import type { CommandToolDescriptor } from "./contracts.js";
 
 interface ${className}Dependencies {
     config: AppConfig;
@@ -141,12 +142,14 @@ export class ${className} {
         this.logger = dependencies.logger;
     }
 
-    public describe(): { name: string; description: string; command: string; examples: string[] } {
+    public describe(): CommandToolDescriptor {
         return {
             name: "${toolId}",
             description: "TODO: describe what this tool does.",
             command: "//${commandName}",
+            argsHint: "[args]",
             examples: ["//${commandName}"],
+            autoRoute: false,
         };
     }
 

@@ -124,8 +124,8 @@ const envSchema = z.object({
     ENABLE_WEB_SEARCH: envBoolean.optional().default(true),
     ALLOW_WEB_SEARCH_BY_DEFAULT: envBoolean.optional().default(true),
     WEB_SEARCH_MAX_RESULTS: z.coerce.number().int().positive().max(10).default(5),
-    ENABLE_SYSTEM_COM: envBoolean.optional().default(false),
-    ENABLE_TOOL_ROUTER: envBoolean.optional().default(false),
+    ENABLE_SYSTEM_COM: envBoolean.optional().default(true),
+    ENABLE_TOOL_ROUTER: envBoolean.optional().default(true),
     // tool-scaffold:insert:env
     ENABLE_MEMORY: envBoolean.optional().default(true),
     AUTO_STORE_MEMORY: envBoolean.optional().default(true),

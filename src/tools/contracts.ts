@@ -4,7 +4,9 @@ export interface CommandToolDescriptor {
     name: string;
     description: string;
     command: string;
+    argsHint?: string;
     examples: string[];
+    autoRoute: boolean;
 }
 
 export interface CommandTool {
@@ -12,4 +14,3 @@ export interface CommandTool {
     shouldRun(request: UserRequest): boolean;
     execute(message: string): Promise<ToolCallRecord>;
 }
-

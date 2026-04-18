@@ -2,6 +2,7 @@ import type { AppConfig } from "../../config/index.js";
 import type { Logger } from "../../observability/logger.js";
 import type { Orchestrator } from "../../orchestrator/index.js";
 import type { ChannelAdapter } from "../types.js";
+import { escapeTelegramHtml, telegramPlainFallback } from "../../utils/channel-formatting.js";
 import { createId } from "../../utils/id.js";
 
 interface TelegramChannelDependencies {
@@ -149,7 +150,10 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
         const text = message.text.trim();
         if (text === "/start") {
-            await this.sendMessage(message.chat.id, "Jarvis is online. Send a message, or use /models to see configured models.");
+            await this.sendMessage(
+                message.chat.id,
+                "<b>Jarvis</b> is online.\n\nSend a message or use /models for configured models.",
+            );
             return;
         }
 
@@ -158,7 +162,8 @@ export class TelegramChannelAdapter implements ChannelAdapter {
                 .listModels()
                 .map((model) => `- ${model.provider}:${model.id} [${model.roles.join(", ")}]`)
                 .join("\n");
-            await this.sendMessage(message.chat.id, modelText || "No models configured.");
+            const body = modelText ? `<b>Models</b>\n<pre>${escapeTelegramHtml(modelText)}</pre>` : "<i>No models configured.</i>";
+            await this.sendMessage(message.chat.id, body);
             return;
         }
 
@@ -216,20 +221,51 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     }
 
     private async sendMessage(chatId: number, text: string): Promise<void> {
-        const response = await fetch(this.buildApiUrl("sendMessage"), {
+        const trimmed = text.slice(0, 4000);
+        let response = await fetch(this.buildApiUrl("sendMessage"), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
                 chat_id: chatId,
-                text,
+                text: trimmed,
+                parse_mode: "HTML",
+                disable_web_page_preview: true,
             }),
         });
 
-        if (!response.ok) {
-            throw new Error(`Telegram sendMessage failed with ${response.status}`);
+        if (response.ok) {
+            return;
         }
+
+        const detail = await response.text();
+
+        if (response.status === 400) {
+            this.logger.warn("Telegram HTML parse failed; retrying plain text", {
+                status: response.status,
+                detail: detail.slice(0, 500),
+            });
+
+            const plain = telegramPlainFallback(trimmed).slice(0, 4000);
+            response = await fetch(this.buildApiUrl("sendMessage"), {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    text: plain,
+                    disable_web_page_preview: true,
+                }),
+            });
+
+            if (response.ok) {
+                return;
+            }
+        }
+
+        throw new Error(`Telegram sendMessage failed with ${response.status}: ${detail}`);
     }
 
     private buildApiUrl(method: string, params?: Record<string, string>): string {

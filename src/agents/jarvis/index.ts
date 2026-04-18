@@ -7,6 +7,7 @@ import type {
     ToolCallRecord,
     UserRequest,
 } from "../../types/core.js";
+import { channelFormattingSystemPrompt } from "../../utils/channel-formatting.js";
 import { truncate } from "../../utils/text.js";
 
 export interface AgentTurnContext {
@@ -32,11 +33,23 @@ export class JarvisAgent implements AssistantAgent {
 
     public async prepareInvocation(context: AgentTurnContext): Promise<ModelInvocation> {
         const systemSections = [
-            "You are Jarvis, a reliable personal AI assistant.",
-            "Be direct, structured, helpful, and consistent with the user's long-term preferences.",
-            `Channel: ${context.request.channel}. Conversation ID: ${context.conversation.id}.`,
-            "If fresh tool results are provided, treat them as trusted runtime context for this turn.",
+            "You are Jarvis—a capable, personable AI assistant. Sound warm and human: conversational but clear, thoughtful without waffle. Aim to feel like a sharp friend who genuinely wants to help.",
+            "Show intelligence by reading the user's intent (not only their literal words). Offer structured answers when topics are complex—short headings or bullets help—while staying easy to skim. When something is ambiguous, ask one concise clarifying question instead of guessing.",
+            "Honor long-term preferences and continuity from memories and summaries when they're provided.",
+            `You're speaking on channel "${context.request.channel}" (conversation ${context.conversation.id}). Adapt warmth and voice to the medium without losing clarity.`,
+            channelFormattingSystemPrompt(context.request.channel),
+            'When "Tool results from this turn" appear below, treat them as trustworthy fresh context—weave them into your reply naturally (e.g., times, places, search snippets). Never contradict tool output that is present.',
         ];
+
+        if (this.config.tools.toolRouter.enabled) {
+            systemSections.push(
+                "Runtime tools may already have run for this message (time, etc.). If tool output is below, you are not \"tool-less\"—acknowledge what was resolved and build on it.",
+            );
+        } else {
+            systemSections.push(
+                "Some capabilities are available via explicit commands (for example //time). If the user hasn't used them, you can suggest the right command when it would help.",
+            );
+        }
 
         if (context.memoryContext.summary) {
             systemSections.push(`Conversation summary:\n${context.memoryContext.summary.content}`);

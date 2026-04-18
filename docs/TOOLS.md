@@ -20,8 +20,9 @@ Where it is wired:
 If you enable the tool router (`ENABLE_TOOL_ROUTER=true`), Jarvis may route plain-language messages to an appropriate **command tool** (for example, "what time is it?" -> `//time`).
 
 - It only routes to command tools that are enabled for the current channel.
-- It uses a cheap heuristic for a few cases and can use the configured LLM provider for everything else.
 - For best results, keep each command tool's `describe()` accurate (description + examples).
+- Only tools with `autoRoute: true` in `describe()` are eligible for auto-routing.
+- Jarvis avoids an extra model call unless there is a real choice (2+ auto-routable tools).
 
 ### 2) Pre-model tools (augment the prompt)
 
