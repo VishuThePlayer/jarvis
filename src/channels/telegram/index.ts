@@ -107,8 +107,20 @@ export class TelegramChannelAdapter implements ChannelAdapter {
                 });
 
                 for (const update of updates) {
-                    await this.handleUpdate(update);
-                    this.offset = Math.max(this.offset, update.update_id + 1);
+                    try {
+                        await this.handleUpdate(update);
+                    } catch (error) {
+                        if (!this.running || isAbortError(error)) {
+                            throw error;
+                        }
+
+                        this.logger.error("Telegram update handling failed", {
+                            error: error instanceof Error ? error.message : String(error),
+                            updateId: update.update_id,
+                        });
+                    } finally {
+                        this.offset = Math.max(this.offset, update.update_id + 1);
+                    }
                 }
 
                 // If long polling is disabled, prevent a tight loop when idle.
@@ -182,7 +194,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             },
         });
 
-        await this.sendMessage(message.chat.id, response.content.slice(0, 4000));
+        await this.sendMessage(message.chat.id, response.content);
     }
 
     private async getUpdates(input: {
@@ -221,7 +233,10 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     }
 
     private async sendMessage(chatId: number, text: string): Promise<void> {
-        const trimmed = text.slice(0, 4000);
+        const fallbackText = "Sorry - I could not generate a reply. Please try again.";
+        const trimmed = (text ?? "").slice(0, 4000).trim();
+        const initialText = trimmed.length > 0 ? trimmed : fallbackText;
+
         let response = await fetch(this.buildApiUrl("sendMessage"), {
             method: "POST",
             headers: {
@@ -229,7 +244,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             },
             body: JSON.stringify({
                 chat_id: chatId,
-                text: trimmed,
+                text: initialText,
                 parse_mode: "HTML",
                 disable_web_page_preview: true,
             }),
@@ -241,13 +256,25 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
         const detail = await response.text();
 
+        let description: string | undefined;
+        try {
+            const parsed = JSON.parse(detail) as { description?: unknown };
+            if (parsed && typeof parsed === "object" && typeof parsed.description === "string") {
+                description = parsed.description;
+            }
+        } catch {
+            // ignore
+        }
+
         if (response.status === 400) {
-            this.logger.warn("Telegram HTML parse failed; retrying plain text", {
+            this.logger.warn("Telegram sendMessage returned 400; retrying plain text", {
                 status: response.status,
-                detail: detail.slice(0, 500),
+                detail: (description ?? detail).slice(0, 500),
             });
 
-            const plain = telegramPlainFallback(trimmed).slice(0, 4000);
+            const plain = telegramPlainFallback(initialText).slice(0, 4000).trim();
+            const safePlain = plain.length > 0 ? plain : fallbackText;
+
             response = await fetch(this.buildApiUrl("sendMessage"), {
                 method: "POST",
                 headers: {
@@ -255,7 +282,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
                 },
                 body: JSON.stringify({
                     chat_id: chatId,
-                    text: plain,
+                    text: safePlain,
                     disable_web_page_preview: true,
                 }),
             });

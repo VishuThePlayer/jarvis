@@ -38,6 +38,9 @@ export interface AppConfig {
         defaultUserId: string;
         defaultTemperature: number;
     };
+    web: {
+        appOrigin?: string;
+    };
     channels: {
         terminal: {
             enabled: boolean;
@@ -105,6 +108,7 @@ const envSchema = z.object({
     PORT: z.coerce.number().int().positive().max(65535).default(3000),
     DEFAULT_USER_ID: z.string().min(1).default("local-user"),
     DEFAULT_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.3),
+    WEB_APP_ORIGIN: z.string().url().optional(),
     ENABLE_HTTP: envBoolean.optional().default(true),
     ENABLE_TERMINAL: envBoolean.optional().default(true),
     ENABLE_TELEGRAM: envBoolean.optional().default(false),
@@ -141,6 +145,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     const openAiKey = parsed.OPENAI_API_KEY?.trim();
     const openRouterKey = parsed.OPENROUTER_API_KEY?.trim();
     const databaseUrl = parsed.DATABASE_URL?.trim();
+    const webAppOrigin = parsed.WEB_APP_ORIGIN?.trim();
 
     if (parsed.PERSISTENCE_DRIVER === "postgres" && !databaseUrl) {
         throw new Error("DATABASE_URL is required when PERSISTENCE_DRIVER=postgres");
@@ -153,6 +158,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             port: parsed.PORT,
             defaultUserId: parsed.DEFAULT_USER_ID,
             defaultTemperature: parsed.DEFAULT_TEMPERATURE,
+        },
+        web: {
+            ...(webAppOrigin ? { appOrigin: webAppOrigin } : {}),
         },
         channels: {
             terminal: {

@@ -9,4 +9,5 @@ test("createConfig applies sensible defaults", () => {
     assert.equal(config.providers.defaultProvider, "local");
     assert.equal(config.channels.http.enabled, true);
     assert.equal(config.memory.enabled, true);
+    assert.equal(config.web.appOrigin, undefined);
 });

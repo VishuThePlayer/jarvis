@@ -6,7 +6,7 @@ Jarvis tools are small modules that run **before** the LLM call (pre-model tools
 
 ### 1) Command tools (recommended for `//...` commands)
 
-- Triggered by an explicit user command like `//time`.
+- Triggered by an explicit user command like `//time` (some tools may also auto-trigger on natural language).
 - Runs **without calling the LLM** (the orchestrator short-circuits).
 - The assistant reply is the tool output text.
 

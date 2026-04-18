@@ -33,6 +33,16 @@ export class HttpServer implements ChannelAdapter {
         this.logger = dependencies.logger;
         this.orchestrator = dependencies.orchestrator;
 
+        this.app.use((request, response, next) => {
+            this.applyCorsHeaders(request, response);
+
+            if (request.method === "OPTIONS") {
+                response.status(204).end();
+                return;
+            }
+
+            next();
+        });
         this.app.use(express.json({ limit: "1mb" }));
         this.registerRoutes();
     }
@@ -202,5 +212,19 @@ export class HttpServer implements ChannelAdapter {
                 ? { preferWebSearch: candidate.preferWebSearch }
                 : {}),
         };
+    }
+
+    private applyCorsHeaders(request: Request, response: Response) {
+        const allowedOrigin = this.config.web.appOrigin;
+        const requestOrigin = request.headers.origin;
+
+        if (!allowedOrigin || requestOrigin !== allowedOrigin) {
+            return;
+        }
+
+        response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+        response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+        response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+        response.setHeader("Vary", "Origin");
     }
 }

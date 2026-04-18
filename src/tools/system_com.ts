@@ -12,11 +12,48 @@ interface SystemComToolDependencies {
 
 /**
  * Commands (trimmed):
- * - `/time`, `/sys time`, `/sys get-time`
  * - `//time`, `//sys time`, `//sys get-time`
- * Telegram may append `@botname` in groups (e.g. `/time@my_bot`).
  */
-const SYSTEM_COMMAND_RE = /^(?:\/\/|\/)(?:sys\s+)?(get-time|time)(?:@\w+)?(?:\s+(.+))?$/i;
+const SYSTEM_COMMAND_RE = /^\/\/(?:sys\s+)?(get-time|time)(?:\s+(.+))?$/i;
+
+function extractTimeIntent(message: string): { place?: string } | null {
+    const cleaned = message.trim();
+    if (!cleaned) {
+        return null;
+    }
+
+    const normalizePlace = (raw: string) =>
+        raw
+            .trim()
+            .replace(/^[\s:,-]+/, "")
+            .replace(/[?.!]+$/, "")
+            .trim();
+
+    // what time is it (in X)?
+    const inMatch =
+        cleaned.match(
+            /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b\s*(?:in|at)\s+(.+)$/i,
+        ) ?? cleaned.match(/\btime\b\s*(?:in|at)\s+(.+)$/i);
+
+    if (inMatch?.[1]) {
+        const place = normalizePlace(inMatch[1]);
+        return place ? { place } : {};
+    }
+
+    if (/^\s*time\s*[?.!]?\s*$/i.test(cleaned)) {
+        return {};
+    }
+
+    if (
+        /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b/i.test(
+            cleaned,
+        )
+    ) {
+        return {};
+    }
+
+    return null;
+}
 
 interface GeoResult {
     label: string;
@@ -55,10 +92,10 @@ export class SystemComTool {
     public describe(): CommandToolDescriptor {
         return {
             name: "system-com",
-            description: "Return server local time and UTC time.",
+            description: "Return server local time, UTC time, or time in a given place.",
             command: "//time",
             argsHint: "[place]",
-            examples: ["//time", "//time Boston, MA", "/time", "/sys time", "/sys get-time"],
+            examples: ["//time", "//time Boston, MA"],
             autoRoute: true,
         };
     }
@@ -72,22 +109,44 @@ export class SystemComTool {
             return false;
         }
 
-        return SYSTEM_COMMAND_RE.test(request.message.trim());
-    }
-
-    private parseInvocation(message: string): { place?: string } | null {
-        const match = message.trim().match(SYSTEM_COMMAND_RE);
-        const cmd = match?.[1]?.toLowerCase();
-        if (cmd !== "time" && cmd !== "get-time") {
-            return null;
+        const message = request.message.trim();
+        if (SYSTEM_COMMAND_RE.test(message)) {
+            return true;
         }
 
-        const rawPlace = match?.[2]?.trim();
+        return extractTimeIntent(message) != null;
+    }
+
+
+    private parseInvocation(message: string): { place?: string } | null {
+        const trimmed = message.trim();
+        const match = trimmed.match(SYSTEM_COMMAND_RE);
+        let rawPlace: string | undefined;
+
+        if (match) {
+            const cmd = match?.[1]?.toLowerCase();
+            if (cmd !== "time" && cmd !== "get-time") {
+                return null;
+            }
+
+            rawPlace = match?.[2]?.trim();
+        } else {
+            const intent = extractTimeIntent(trimmed);
+            if (!intent) {
+                return null;
+            }
+            rawPlace = intent.place;
+        }
+
         if (!rawPlace) {
             return {};
         }
 
-        const cleaned = normalizeWhitespace(rawPlace).replace(/^in\s+/i, "").trim();
+        const cleaned = normalizeWhitespace(rawPlace)
+            .replace(/^[\s:,-]+/, "")
+            .replace(/[?.!]+$/, "")
+            .replace(/^in\s+/i, "")
+            .trim();
         if (!cleaned) {
             return {};
         }
@@ -145,7 +204,7 @@ export class SystemComTool {
             if (resolved.kind === "ambiguous") {
                 const bullets = resolved.options
                     .slice(0, 3)
-                    .map((option) => `- //time ${option.label}`)
+                    .map((option) => `- What time is it in ${option.label}?`)
                     .join("\n");
                 return {
                     id: createId("tool"),
