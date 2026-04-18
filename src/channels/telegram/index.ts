@@ -27,9 +27,26 @@ interface TelegramUpdate {
     };
 }
 
-interface TelegramResponse<T> {
-    ok: boolean;
-    result: T;
+type TelegramResponse<T> =
+    | {
+          ok: true;
+          result: T;
+      }
+    | {
+          ok: false;
+          error_code: number;
+          description: string;
+          parameters?: {
+              retry_after?: number;
+          };
+      };
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAbortError(error: unknown): boolean {
+    return error instanceof Error && error.name === "AbortError";
 }
 
 export class TelegramChannelAdapter implements ChannelAdapter {
@@ -39,6 +56,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     private running = false;
     private offset = 0;
     private pollTask?: Promise<void>;
+    private pollAbort: AbortController | undefined;
 
     public constructor(dependencies: TelegramChannelDependencies) {
         this.config = dependencies.config;
@@ -52,6 +70,10 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             return;
         }
 
+        if (this.running) {
+            return;
+        }
+
         this.running = true;
         this.pollTask = this.pollLoop();
         this.logger.info("Telegram channel started");
@@ -59,25 +81,63 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
     public async stop(): Promise<void> {
         this.running = false;
-        await this.pollTask;
+        this.pollAbort?.abort();
+
+        try {
+            await this.pollTask;
+        } catch (error) {
+            if (!isAbortError(error)) {
+                throw error;
+            }
+        }
     }
 
     private async pollLoop(): Promise<void> {
         while (this.running) {
+            const controller = new AbortController();
+            this.pollAbort = controller;
+
             try {
-                const updates = await this.getUpdates();
+                const timeoutSeconds = this.config.channels.telegram.longPollTimeoutSec;
+                const updates = await this.getUpdates({
+                    timeoutSeconds,
+                    limit: 100,
+                    signal: controller.signal,
+                });
 
                 for (const update of updates) {
-                    this.offset = Math.max(this.offset, update.update_id + 1);
                     await this.handleUpdate(update);
+                    this.offset = Math.max(this.offset, update.update_id + 1);
+                }
+
+                // If long polling is disabled, prevent a tight loop when idle.
+                if (timeoutSeconds === 0 && updates.length === 0) {
+                    await sleep(this.config.channels.telegram.pollIntervalMs);
                 }
             } catch (error) {
+                if (!this.running || isAbortError(error)) {
+                    return;
+                }
+
                 this.logger.error("Telegram polling failed", {
                     error: error instanceof Error ? error.message : String(error),
                 });
-            }
 
-            await new Promise((resolve) => setTimeout(resolve, this.config.channels.telegram.pollIntervalMs));
+                const retryAfterSeconds =
+                    error instanceof Error && "retryAfterSeconds" in error
+                        ? Number((error as Error & { retryAfterSeconds?: number }).retryAfterSeconds)
+                        : NaN;
+
+                await sleep(
+                    Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+                        ? retryAfterSeconds * 1000
+                        : this.config.channels.telegram.pollIntervalMs,
+                );
+            } finally {
+                if (this.pollAbort === controller) {
+                    this.pollAbort = undefined;
+                }
+            }
         }
     }
 
@@ -120,17 +180,38 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         await this.sendMessage(message.chat.id, response.content.slice(0, 4000));
     }
 
-    private async getUpdates(): Promise<TelegramUpdate[]> {
-        const response = await fetch(this.buildApiUrl("getUpdates", {
-            offset: String(this.offset),
-            timeout: "20",
-        }));
+    private async getUpdates(input: {
+        timeoutSeconds: number;
+        limit: number;
+        signal: AbortSignal;
+    }): Promise<TelegramUpdate[]> {
+        const response = await fetch(
+            this.buildApiUrl("getUpdates", {
+                offset: String(this.offset),
+                timeout: String(input.timeoutSeconds),
+                limit: String(input.limit),
+            }),
+            { signal: input.signal },
+        );
 
         if (!response.ok) {
-            throw new Error(`Telegram getUpdates failed with ${response.status}`);
+            const error = new Error(`Telegram getUpdates failed with ${response.status} ${response.statusText}`);
+            const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+            if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+                (error as Error & { retryAfterSeconds?: number }).retryAfterSeconds = retryAfterSeconds;
+            }
+            throw error;
         }
 
         const data = (await response.json()) as TelegramResponse<TelegramUpdate[]>;
+        if (!data.ok) {
+            const error = new Error(`Telegram getUpdates error ${data.error_code}: ${data.description}`);
+            if (data.parameters?.retry_after) {
+                (error as Error & { retryAfterSeconds?: number }).retryAfterSeconds = data.parameters.retry_after;
+            }
+            throw error;
+        }
+
         return data.result ?? [];
     }
 

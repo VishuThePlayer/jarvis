@@ -67,7 +67,7 @@ export interface ConversationRecord {
     updatedAt: Date;
 }
 
-export interface MessageRecord {
+export interface MessageRecord  {
     id: string;
     conversationId: string;
     role: MessageRole;

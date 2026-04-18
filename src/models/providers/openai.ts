@@ -68,6 +68,7 @@ export class OpenAIModelProvider implements ModelProvider {
             }),
         });
 
+
         if (!response.ok) {
             throw new Error(`OpenAI request failed with ${response.status}: ${await response.text()}`);
         }

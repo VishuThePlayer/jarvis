@@ -47,22 +47,36 @@ export class HttpServer implements ChannelAdapter {
     }
 
     public async stop(): Promise<void> {
-        if (!this.server) {
+        const server = this.server;
+        if (!server) {
             return;
         }
 
+        this.server = undefined;
+
         await new Promise<void>((resolve, reject) => {
-            this.server?.close((error) => {
-                if (error) {
-                    reject(error);
+            try {
+                server.close((error) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+
+                    resolve();
+                });
+            } catch (error) {
+                if (
+                    error instanceof Error &&
+                    "code" in error &&
+                    (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING"
+                ) {
+                    resolve();
                     return;
                 }
 
-                resolve();
-            });
+                reject(error);
+            }
         });
-
-        this.server = undefined;
     }
 
     private registerRoutes() {

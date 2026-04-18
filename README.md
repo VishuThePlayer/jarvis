@@ -9,22 +9,26 @@ Jarvis is now structured as a local-first, provider-agnostic assistant runtime w
 - `src/models/registry.ts` selects providers/models and supports local, OpenAI, and OpenRouter adapters.
 - `src/tools/web-search.ts` adds configurable web search.
 - `src/memory/service.ts` handles retrieval, summarization, and durable preference/fact extraction.
-- `src/db/in-memory.ts` provides the current runtime persistence adapter.
-- `db/postgres/schema.sql` defines the target PostgreSQL + pgvector schema.
+- `src/db/in-memory.ts` and `src/db/postgres/persistence.ts` provide persistence adapters (memory or Postgres).
+- `db/postgres/schema.sql` is the reference schema for Postgres (text IDs; pgvector optional).
 
 ## Current persistence status
 
-The runtime currently uses an in-memory persistence adapter so the project can run with the dependencies already present in the repo.
+Persistence is selected via `PERSISTENCE_DRIVER`:
 
-The production-oriented schema is included at `db/postgres/schema.sql` and is ready for a future Postgres repository implementation.
+- `memory` (default): local-only, no external dependencies.
+- `postgres`: durable storage for conversations/messages/runs/memory in Postgres via `pg`.
+
+When `PERSISTENCE_DRIVER=postgres`, `DATABASE_URL` must be set and the runtime will auto-create the target database (for example `jarvis`) and apply the schema on startup.
 
 ## Quick start
 
 1. Copy `.env.example` to `.env`.
 2. Set `DEFAULT_PROVIDER` to `local`, `openai`, or `openrouter`.
-3. Add the matching API key if you use `openai` or `openrouter`.
-4. Run `npm run build`.
-5. Run `npm start`.
+3. Add the matching API key if you use `openai` (`OPENAI_API_KEY`) or `openrouter` (`OPENROUTER_API_KEY`).
+4. (Optional) Set `PERSISTENCE_DRIVER=memory` if you do not want Postgres.
+5. Run `npm run build`.
+6. Run `npm start`.
 
 ## HTTP API
 

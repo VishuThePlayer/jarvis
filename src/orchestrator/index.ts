@@ -114,10 +114,47 @@ export class JarvisOrchestrator implements Orchestrator {
             startedAt: new Date(),
         };
 
-        await this.runs.create(runRecord);
-        await this.conversations.appendMessage(userMessage);
+            await this.runs.create(runRecord);
+            await this.conversations.appendMessage(userMessage);
 
         try {
+            const commandToolCall = await this.tools.tryRunCommand(request);
+            if (commandToolCall) {
+                const toolCalls = [commandToolCall];
+                await this.persistToolMessages(conversation, request, toolCalls);
+
+                const assistantMessage: MessageRecord = {
+                    id: createId("msg"),
+                    conversationId: conversation.id,
+                    role: "assistant",
+                    content: commandToolCall.output,
+                    channel: request.channel,
+                    userId: request.userId,
+                    provider: "local",
+                    model: "jarvis-command",
+                    createdAt: new Date(),
+                };
+
+                await this.conversations.appendMessage(assistantMessage);
+
+                await this.runs.complete(runId, {
+                    status: "completed",
+                    completedAt: new Date(),
+                    provider: "local",
+                    model: "jarvis-command",
+                });
+
+                return {
+                    messageId: assistantMessage.id,
+                    conversationId: conversation.id,
+                    content: assistantMessage.content,
+                    toolCalls,
+                    providerUsed: "local",
+                    modelUsed: "jarvis-command",
+                    memoryWrites: [],
+                };
+            }
+
             const memoryContext = await this.memory.retrieveContext({
                 userId: request.userId,
                 conversationId: conversation.id,

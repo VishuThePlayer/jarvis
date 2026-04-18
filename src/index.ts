@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { createApplication } from "./app/create-application.js";
 
-const application = createApplication();
+const application = await createApplication();
 
 const shutdown = async (signal: string) => {
     await application.stop();

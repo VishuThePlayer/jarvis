@@ -185,4 +185,8 @@ export class InMemoryPersistence {
     public readonly conversations = new InMemoryConversationRepository();
     public readonly runs = new InMemoryRunRepository();
     public readonly memories = new InMemoryMemoryRepository();
+
+    public async stop(): Promise<void> {
+        // No-op for the in-memory persistence adapter.
+    }
 }

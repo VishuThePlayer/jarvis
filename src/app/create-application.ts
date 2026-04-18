@@ -5,6 +5,7 @@ import type { ChannelAdapter } from "../channels/types.js";
 import { TelegramChannelAdapter } from "../channels/telegram/index.js";
 import { createConfig } from "../config/index.js";
 import { InMemoryPersistence } from "../db/in-memory.js";
+import { createPostgresPersistence } from "../db/postgres/persistence.js";
 import { MemoryService } from "../memory/service.js";
 import { ModelProviderRegistry } from "../models/registry.js";
 import { Logger } from "../observability/logger.js";
@@ -17,10 +18,13 @@ export interface Application {
     stop(): Promise<void>;
 }
 
-export function createApplication(): Application {
+export async function createApplication(): Promise<Application> {
     const config = createConfig(process.env);
     const logger = new Logger(config.app.logLevel);
-    const persistence = new InMemoryPersistence();
+    const persistence =
+        config.persistence.driver === "postgres"
+            ? await createPostgresPersistence({ config, logger })
+            : new InMemoryPersistence();
     const memory = new MemoryService({
         config,
         logger,
@@ -60,6 +64,7 @@ export function createApplication(): Application {
             logger.info("Starting Jarvis application", {
                 channels: channels.length,
                 defaultProvider: config.providers.defaultProvider,
+                persistenceDriver: config.persistence.driver,
             });
 
             for (const channel of channels) {
@@ -71,6 +76,7 @@ export function createApplication(): Application {
                 await channel.stop();
             }
 
+            await persistence.stop();
             logger.info("Stopped Jarvis application");
         },
     };
