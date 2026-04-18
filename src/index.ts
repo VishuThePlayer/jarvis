@@ -1,13 +1,19 @@
-import ChatRouter from "./chat/index.js";
+import "dotenv/config";
+import { createApplication } from "./app/create-application.js";
 
-const chatRouter = new ChatRouter();
+const application = createApplication();
 
-chatRouter.addMessage({
-    uuid: "123",
-    role: "user",
-    content: "Hello, how are you?",
-    source: "terminal",
-    createdAt: new Date(),
+const shutdown = async (signal: string) => {
+    await application.stop();
+    process.exit(signal === "SIGTERM" ? 0 : 130);
+};
+
+process.once("SIGINT", () => {
+    void shutdown("SIGINT");
 });
 
-console.log(chatRouter.getChatHistory());
+process.once("SIGTERM", () => {
+    void shutdown("SIGTERM");
+});
+
+await application.start();
