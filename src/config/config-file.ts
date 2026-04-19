@@ -65,7 +65,7 @@ const channelsSchema = z.object({
 
 const toolsSchema = z.object({
     webSearch: toolWithOptionsSchema.default(() => ({ enabled: true })),
-    systemCom: z.boolean().default(true),
+    time: z.boolean().default(true),
     toolRouter: z.boolean().default(true),
 });
 
@@ -87,7 +87,7 @@ export const configFileSchema = z.object({
     })),
     tools: toolsSchema.default(() => ({
         webSearch: { enabled: true },
-        systemCom: true,
+        time: true,
         toolRouter: true,
     })),
     memory: memorySchema.default(() => ({
@@ -155,7 +155,7 @@ export function configFileToEnvOverrides(config: JarvisConfigFile): Record<strin
     if (config.tools.webSearch.maxResults != null) {
         env.WEB_SEARCH_MAX_RESULTS = String(config.tools.webSearch.maxResults);
     }
-    env.ENABLE_SYSTEM_COM = String(config.tools.systemCom);
+    env.ENABLE_TIME = String(config.tools.time);
     env.ENABLE_TOOL_ROUTER = String(config.tools.toolRouter);
 
     env.ENABLE_MEMORY = String(config.memory.enabled);

@@ -110,7 +110,7 @@ If `parameters` is omitted, the router sends `{ type: "object", properties: {} }
 
 ## Recommended conventions
 
-- Tool names: kebab-case for `ToolCallRecord.name` (example: `system-com`, `web-search`).
+- Tool names: kebab-case for `ToolCallRecord.name` (example: `time`, `web-search`).
 - File names: kebab-case under `src/tools/`.
 - Config keys: camelCase under `config.tools.*`.
 - Keep tool output concise (it becomes part of the conversation history).

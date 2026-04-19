@@ -58,7 +58,7 @@ Key fields in `describe()`:
 - `parameters` (optional): JSON Schema for structured arguments. Used by the ToolRouter for native tool calling.
 
 Example tool: time
-- Code: `src/tools/system_com.ts`
+- Code: `src/tools/time.ts`
 - Behavior: auto-detects natural language like what time is it in Boston? (and also supports an explicit debug command).
 
 ### B) Pre-model tools (augment the prompt; LLM still replies)
@@ -102,7 +102,7 @@ When the router has 2+ auto-routable tools, it sends a request like:
     {
       "type": "function",
       "function": {
-        "name": "system-com",
+        "name": "time",
         "description": "Return server local time, UTC time, or time in a given place.",
         "parameters": {
           "type": "object",

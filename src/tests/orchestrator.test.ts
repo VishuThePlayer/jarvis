@@ -49,7 +49,7 @@ function createOrchestrator(env: Record<string, string> = {}) {
 
 test("command tools short-circuit the LLM", async () => {
     const orchestrator = createOrchestrator({
-        ENABLE_SYSTEM_COM: "true",
+        ENABLE_TIME: "true",
     });
 
     const response = await orchestrator.handleRequest({
@@ -63,7 +63,7 @@ test("command tools short-circuit the LLM", async () => {
     });
 
     assert.equal(response.toolCalls.length, 1);
-    assert.equal(response.toolCalls[0]?.name, "system-com");
+    assert.equal(response.toolCalls[0]?.name, "time");
     assert.equal(response.providerUsed, "openai");
     assert.equal(response.modelUsed, "jarvis-command");
     assert.match(response.content, /^Time\b/);
@@ -71,7 +71,7 @@ test("command tools short-circuit the LLM", async () => {
 
 test("tool router can route natural language to command tools", async () => {
     const orchestrator = createOrchestrator({
-        ENABLE_SYSTEM_COM: "true",
+        ENABLE_TIME: "true",
         ENABLE_TOOL_ROUTER: "true",
     });
 
@@ -86,7 +86,7 @@ test("tool router can route natural language to command tools", async () => {
     });
 
     assert.equal(response.toolCalls.length, 1);
-    assert.equal(response.toolCalls[0]?.name, "system-com");
+    assert.equal(response.toolCalls[0]?.name, "time");
     assert.match(response.content, /^Time\b/);
 });
 
@@ -119,7 +119,7 @@ test("time tool can resolve city time via geocoding", async (t) => {
     });
 
     const orchestrator = createOrchestrator({
-        ENABLE_SYSTEM_COM: "true",
+        ENABLE_TIME: "true",
         ENABLE_TOOL_ROUTER: "true",
     });
 
@@ -134,7 +134,7 @@ test("time tool can resolve city time via geocoding", async (t) => {
     });
 
     assert.equal(response.toolCalls.length, 1);
-    assert.equal(response.toolCalls[0]?.name, "system-com");
+    assert.equal(response.toolCalls[0]?.name, "time");
     assert.equal(response.providerUsed, "openai");
     assert.equal(response.modelUsed, "jarvis-command");
     assert.match(response.content, /^Time\b/);

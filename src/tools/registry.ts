@@ -2,7 +2,7 @@ import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
 import type { ChannelKind, ToolCallRecord, UserRequest } from "../types/core.js";
 import type { CommandTool, CommandToolDescriptor } from "./contracts.js";
-import { SystemComTool } from "./system_com.js";
+import { TimeTool } from "./time.js";
 import { WebSearchTool } from "./web-search.js";
 // tool-scaffold:insert:import
 
@@ -13,17 +13,17 @@ interface ToolRegistryDependencies {
 
 export class ToolRegistry {
     private readonly webSearch: WebSearchTool;
-    private readonly systemCom: SystemComTool;
+    private readonly time: TimeTool;
     // tool-scaffold:insert:field
     private readonly commandTools: CommandTool[];
 
     public constructor(dependencies: ToolRegistryDependencies) {
         this.webSearch = new WebSearchTool(dependencies);
-        this.systemCom = new SystemComTool(dependencies);
+        this.time = new TimeTool(dependencies);
         // tool-scaffold:insert:ctor
 
         this.commandTools = [
-            this.systemCom,
+            this.time,
             // tool-scaffold:insert:command-tool
         ];
     }

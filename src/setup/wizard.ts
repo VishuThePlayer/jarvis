@@ -154,7 +154,7 @@ async function stepChannels(rl: Interface): Promise<ChannelSetup> {
 interface FeatureSetup {
     tools: {
         webSearch: { enabled: boolean; allowByDefault?: boolean; maxResults?: number };
-        systemCom: boolean;
+        time: boolean;
         toolRouter: boolean;
     };
     memory: {
@@ -176,7 +176,7 @@ async function stepFeatures(rl: Interface): Promise<FeatureSetup> {
     return {
         tools: {
             webSearch: { enabled: webSearch, allowByDefault: true, maxResults: 5 },
-            systemCom: true,
+            time: true,
             toolRouter,
         },
         memory: {

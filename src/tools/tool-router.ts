@@ -83,7 +83,7 @@ export class ToolRouter {
             return null;
         }
 
-        const timeTool = routableTools.find((tool) => tool.name === "system-com");
+        const timeTool = routableTools.find((tool) => tool.name === "time");
         const timeIntent = timeTool ? extractTimeIntent(request.message) : null;
         if (timeTool && timeIntent) {
             const command = timeIntent.place ? `${timeTool.command} ${timeIntent.place}` : timeTool.command;

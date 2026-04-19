@@ -77,7 +77,7 @@ export interface AppConfig {
             maxResults: number;
             perChannel: Record<ChannelKind, boolean>;
         };
-        systemCom: {
+        time: {
             enabled: boolean;
             perChannel: Record<ChannelKind, boolean>;
         };
@@ -126,7 +126,7 @@ const envSchema = z.object({
     ENABLE_WEB_SEARCH: envBoolean.optional().default(true),
     ALLOW_WEB_SEARCH_BY_DEFAULT: envBoolean.optional().default(true),
     WEB_SEARCH_MAX_RESULTS: z.coerce.number().int().positive().max(10).default(5),
-    ENABLE_SYSTEM_COM: envBoolean.optional().default(true),
+    ENABLE_TIME: envBoolean.optional().default(true),
     ENABLE_TOOL_ROUTER: envBoolean.optional().default(true),
     // tool-scaffold:insert:env
     ENABLE_MEMORY: envBoolean.optional().default(true),
@@ -199,8 +199,8 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
                     telegram: true,
                 },
             },
-            systemCom: {
-                enabled: parsed.ENABLE_SYSTEM_COM,
+            time: {
+                enabled: parsed.ENABLE_TIME,
                 perChannel: {
                     terminal: true,
                     http: true,

@@ -69,7 +69,7 @@ src/
 │   ├── contracts.ts                  # CommandTool + CommandToolDescriptor
 │   ├── registry.ts                   # Tool registry (command + pre-model)
 │   ├── tool-router.ts                # NL -> //command routing
-│   ├── system_com.ts                 # Time/timezone tool
+│   ├── time.ts                 # Time/timezone tool
 │   └── web-search.ts                # DuckDuckGo web search
 ├── memory/
 │   └── service.ts                    # Memory retrieval + capture
@@ -511,7 +511,7 @@ All tools live in `src/tools/`. Current tools:
 
 | Tool | File | Command | Type |
 |------|------|---------|------|
-| Time/timezone | `src/tools/system_com.ts` | `//time [place]` | Command |
+| Time/timezone | `src/tools/time.ts` | `//time [place]` | Command |
 | Web search | `src/tools/web-search.ts` | (auto-triggered) | Pre-model |
 
 ### What you can change

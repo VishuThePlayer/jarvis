@@ -5,16 +5,12 @@ import type { ToolCallRecord, UserRequest } from "../types/core.js";
 import type { CommandToolDescriptor } from "./contracts.js";
 import { keywordOverlapScore, normalizeWhitespace, tokenize } from "../utils/text.js";
 
-interface SystemComToolDependencies {
+interface TimeToolDependencies {
     config: AppConfig;
     logger: Logger;
 }
 
-/**
- * Commands (trimmed):
- * - `//time`, `//sys time`, `//sys get-time`
- */
-const SYSTEM_COMMAND_RE = /^\/\/(?:sys\s+)?(get-time|time)(?:\s+(.+))?$/i;
+const COMMAND_RE = /^\/\/(?:sys\s+)?(get-time|time)(?:\s+(.+))?$/i;
 
 function extractTimeIntent(message: string): { place?: string } | null {
     const cleaned = message.trim();
@@ -29,7 +25,6 @@ function extractTimeIntent(message: string): { place?: string } | null {
             .replace(/[?.!]+$/, "")
             .trim();
 
-    // what time is it (in X)?
     const inMatch =
         cleaned.match(
             /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b\s*(?:in|at)\s+(.+)$/i,
@@ -79,19 +74,19 @@ type ResolveLocationResult =
     | { kind: "ambiguous"; query: string; options: GeoResult[] }
     | { kind: "none"; query: string };
 
-export class SystemComTool {
+export class TimeTool {
     private readonly config: AppConfig;
     private readonly logger: Logger;
     private readonly geocodeCache = new Map<string, { expiresAt: number; value: ResolveLocationResult }>();
 
-    public constructor(dependencies: SystemComToolDependencies) {
+    public constructor(dependencies: TimeToolDependencies) {
         this.config = dependencies.config;
         this.logger = dependencies.logger;
     }
 
     public describe(): CommandToolDescriptor {
         return {
-            name: "system-com",
+            name: "time",
             description: "Return server local time, UTC time, or time in a given place.",
             command: "//time",
             argsHint: "[place]",
@@ -111,16 +106,16 @@ export class SystemComTool {
     }
 
     public shouldRun(request: UserRequest): boolean {
-        if (!this.config.tools.systemCom.enabled) {
+        if (!this.config.tools.time.enabled) {
             return false;
         }
 
-        if (!this.config.tools.systemCom.perChannel[request.channel]) {
+        if (!this.config.tools.time.perChannel[request.channel]) {
             return false;
         }
 
         const message = request.message.trim();
-        if (SYSTEM_COMMAND_RE.test(message)) {
+        if (COMMAND_RE.test(message)) {
             return true;
         }
 
@@ -130,7 +125,7 @@ export class SystemComTool {
 
     private parseInvocation(message: string): { place?: string } | null {
         const trimmed = message.trim();
-        const match = trimmed.match(SYSTEM_COMMAND_RE);
+        const match = trimmed.match(COMMAND_RE);
         let rawPlace: string | undefined;
 
         if (match) {
@@ -176,9 +171,9 @@ export class SystemComTool {
         if (!invocation) {
             return {
                 id: createId("tool"),
-                name: "system-com",
+                name: "time",
                 input,
-                output: "No recognized system command.",
+                output: "No recognized time command.",
                 success: false,
                 createdAt,
             };
@@ -191,7 +186,7 @@ export class SystemComTool {
                 const output = `Time\n- local: ${this.formatLocalDateTime(now)} (UTC${this.formatUtcOffset(now)})\n- utc: ${now.toISOString()}`;
                 return {
                     id: createId("tool"),
-                    name: "system-com",
+                    name: "time",
                     input,
                     output,
                     success: true,
@@ -203,7 +198,7 @@ export class SystemComTool {
             if (resolved.kind === "none") {
                 return {
                     id: createId("tool"),
-                    name: "system-com",
+                    name: "time",
                     input,
                     output: `I could not find a location for "${resolved.query}". Try a more specific place, e.g. "Boston, MA".`,
                     success: false,
@@ -218,7 +213,7 @@ export class SystemComTool {
                     .join("\n");
                 return {
                     id: createId("tool"),
-                    name: "system-com",
+                    name: "time",
                     input,
                     output: `That location is ambiguous: "${resolved.query}". Try one of:\n${bullets}`,
                     success: false,
@@ -230,7 +225,7 @@ export class SystemComTool {
             const output = `Time\n- ${resolved.result.label}: ${formatted} (${resolved.result.timezone})\n- utc: ${now.toISOString()}`;
             return {
                 id: createId("tool"),
-                name: "system-com",
+                name: "time",
                 input,
                 output,
                 success: true,
@@ -238,13 +233,13 @@ export class SystemComTool {
             };
         } catch (error) {
             const text = error instanceof Error ? error.message : String(error);
-            this.logger.warn("System command failed", { error: text });
+            this.logger.warn("Time tool failed", { error: text });
 
             return {
                 id: createId("tool"),
-                name: "system-com",
+                name: "time",
                 input,
-                output: `System command failed: ${text}`,
+                output: `Time tool failed: ${text}`,
                 success: false,
                 createdAt,
             };
@@ -264,7 +259,6 @@ export class SystemComTool {
     }
 
     private formatUtcOffset(date: Date): string {
-        // getTimezoneOffset() returns minutes behind UTC (e.g. PST -> 480)
         const totalMinutes = -date.getTimezoneOffset();
         const sign = totalMinutes >= 0 ? "+" : "-";
         const absMinutes = Math.abs(totalMinutes);
