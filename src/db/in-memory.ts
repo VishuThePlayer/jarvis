@@ -171,7 +171,7 @@ export class InMemoryRunRepository implements RunRepository {
 export class InMemoryMemoryRepository implements MemoryRepository {
     private readonly entries = new Map<string, MemoryEntry>();
 
-    public async save(entry: MemoryEntry): Promise<void> {
+    public async save(entry: MemoryEntry, _embedding?: number[]): Promise<void> {
         this.entries.set(entry.id, cloneMemory(entry));
     }
 

@@ -11,6 +11,7 @@ import type {
     ConversationRecord,
     MessageRecord,
     RunRecord,
+    StreamEvent,
     ToolCallRecord,
     UserRequest,
 } from "../types/core.js";
@@ -19,6 +20,7 @@ import { toTitleFromMessage } from "../utils/text.js";
 
 export interface Orchestrator {
     handleRequest(request: UserRequest): Promise<AssistantResponse>;
+    handleRequestStream(request: UserRequest): AsyncIterable<StreamEvent>;
     listModels(): ReturnType<ModelProviderRegistry["listModels"]>;
     getConversation(conversationId: string): Promise<ConversationRecord | null>;
     getConversationMessages(conversationId: string): Promise<MessageRecord[]>;
@@ -257,6 +259,199 @@ export class JarvisOrchestrator implements Orchestrator {
             });
 
             throw error;
+        }
+    }
+
+    public async *handleRequestStream(request: UserRequest): AsyncIterable<StreamEvent> {
+        const conversation = await this.conversations.ensureConversation({
+            userId: request.userId,
+            channel: request.channel,
+            title: toTitleFromMessage(request.message),
+            ...(request.conversationId ? { conversationId: request.conversationId } : {}),
+        });
+
+        const resolvedModels = this.models.resolveForRequest(request);
+        const runId = createId("run");
+        const userMessage: MessageRecord = {
+            id: createId("msg"),
+            conversationId: conversation.id,
+            role: "user",
+            content: request.message,
+            channel: request.channel,
+            userId: request.userId,
+            createdAt: new Date(),
+        };
+
+        const runRecord: RunRecord = {
+            id: runId,
+            requestId: request.requestId,
+            conversationId: conversation.id,
+            userId: request.userId,
+            channel: request.channel,
+            provider: resolvedModels.primary.provider.kind,
+            model: resolvedModels.primary.model,
+            status: "running",
+            startedAt: new Date(),
+        };
+
+        await this.runs.create(runRecord);
+        await this.conversations.appendMessage(userMessage);
+
+        try {
+            let commandToolCall = await this.tools.tryRunCommand(request);
+
+            if (!commandToolCall) {
+                const availableCommandTools = this.tools.listAvailableCommandTools(request.channel);
+                const route = await this.toolRouter.routeCommandTool(request, availableCommandTools);
+                if (route) {
+                    commandToolCall = await this.tools.tryRunCommand({ ...request, message: route.command });
+                }
+            }
+
+            if (commandToolCall) {
+                const toolCalls = [commandToolCall];
+                await this.persistToolMessages(conversation, request, toolCalls);
+
+                const assistantMessage: MessageRecord = {
+                    id: createId("msg"),
+                    conversationId: conversation.id,
+                    role: "assistant",
+                    content: commandToolCall.output,
+                    channel: request.channel,
+                    userId: request.userId,
+                    provider: "openai",
+                    model: "jarvis-command",
+                    createdAt: new Date(),
+                };
+
+                await this.conversations.appendMessage(assistantMessage);
+                await this.runs.complete(runId, {
+                    status: "completed",
+                    completedAt: new Date(),
+                    provider: "openai",
+                    model: "jarvis-command",
+                });
+
+                yield {
+                    type: "response",
+                    response: {
+                        messageId: assistantMessage.id,
+                        conversationId: conversation.id,
+                        content: assistantMessage.content,
+                        toolCalls,
+                        providerUsed: "openai",
+                        modelUsed: "jarvis-command",
+                        memoryWrites: [],
+                    },
+                };
+                yield { type: "done" };
+                return;
+            }
+
+            const memoryContext = await this.memory.retrieveContext({
+                userId: request.userId,
+                conversationId: conversation.id,
+                query: request.message,
+            });
+
+            const toolCalls = await this.tools.runPreModelTools(request);
+            await this.persistToolMessages(conversation, request, toolCalls);
+
+            const historyLimit = this.config.orchestrator.historyMessageLimit;
+            const history = await this.conversations.listRecentMessages(conversation.id, historyLimit);
+            const invocation = await this.agents.getPrimary().prepareInvocation({
+                request,
+                conversation,
+                history,
+                memoryContext,
+                toolCalls,
+            });
+
+            let fullText = "";
+            let finalResult: import("../types/core.js").ModelResult | undefined;
+
+            for await (const chunk of this.models.generateStream(invocation, resolvedModels)) {
+                if (!chunk.done && chunk.text) {
+                    fullText += chunk.text;
+                    yield { type: "delta", text: chunk.text };
+                }
+                if (chunk.done && chunk.result) {
+                    finalResult = chunk.result;
+                    fullText = chunk.result.text;
+                }
+            }
+
+            if (!finalResult) {
+                finalResult = {
+                    provider: resolvedModels.primary.provider.kind,
+                    model: resolvedModels.primary.model,
+                    text: fullText,
+                };
+            }
+
+            const assistantMessage: MessageRecord = {
+                id: createId("msg"),
+                conversationId: conversation.id,
+                role: "assistant",
+                content: finalResult.text,
+                channel: request.channel,
+                userId: request.userId,
+                provider: finalResult.provider,
+                model: finalResult.model,
+                createdAt: new Date(),
+            };
+
+            await this.conversations.appendMessage(assistantMessage);
+
+            const messageCount = await this.conversations.countMessages(conversation.id);
+            const recentMessages = await this.conversations.listRecentMessages(
+                conversation.id,
+                Math.max(8, historyLimit),
+            );
+            const memoryWrites = await this.memory.captureTurn({
+                request,
+                response: assistantMessage,
+                messageCount,
+                recentMessages,
+            });
+
+            await this.runs.complete(runId, {
+                status: "completed",
+                completedAt: new Date(),
+                provider: finalResult.provider,
+                model: finalResult.model,
+            });
+
+            yield {
+                type: "response",
+                response: {
+                    messageId: assistantMessage.id,
+                    conversationId: conversation.id,
+                    content: assistantMessage.content,
+                    toolCalls,
+                    providerUsed: finalResult.provider,
+                    modelUsed: finalResult.model,
+                    memoryWrites,
+                    ...(finalResult.usage ? { usage: finalResult.usage } : {}),
+                },
+            };
+            yield { type: "done" };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+
+            await this.runs.complete(runId, {
+                status: "failed",
+                completedAt: new Date(),
+                error: message,
+            });
+
+            this.logger.error("Streaming request failed", {
+                requestId: request.requestId,
+                conversationId: conversation.id,
+                error: message,
+            });
+
+            yield { type: "error", error: message };
         }
     }
 

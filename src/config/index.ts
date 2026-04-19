@@ -37,6 +37,10 @@ export interface AppConfig {
         port: number;
         defaultUserId: string;
         defaultTemperature: number;
+        apiKey?: string;
+        maxMessageLength: number;
+        rateLimitWindowMs: number;
+        rateLimitMaxRequests: number;
     };
     web: {
         appOrigin?: string;
@@ -59,6 +63,8 @@ export interface AppConfig {
         openai: {
             apiKey?: string;
             baseUrl: string;
+            timeoutMs: number;
+            maxRetries: number;
         };
     };
     models: {
@@ -82,6 +88,10 @@ export interface AppConfig {
             perChannel: Record<ChannelKind, boolean>;
         };
         toolRouter: {
+            enabled: boolean;
+            perChannel: Record<ChannelKind, boolean>;
+        };
+        memoryLookup: {
             enabled: boolean;
             perChannel: Record<ChannelKind, boolean>;
         };
@@ -109,6 +119,10 @@ const envSchema = z.object({
     PORT: z.coerce.number().int().positive().max(65535).default(3000),
     DEFAULT_USER_ID: z.string().min(1).default("local-user"),
     DEFAULT_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.3),
+    API_KEY: z.string().optional(),
+    MAX_MESSAGE_LENGTH: z.coerce.number().int().positive().default(10000),
+    RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
+    RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
     WEB_APP_ORIGIN: z.string().url().optional(),
     ENABLE_HTTP: envBoolean.optional().default(true),
     ENABLE_TERMINAL: envBoolean.optional().default(true),
@@ -118,6 +132,8 @@ const envSchema = z.object({
     TELEGRAM_LONG_POLL_TIMEOUT_SEC: z.coerce.number().int().min(0).max(50).default(30),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
+    LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
+    LLM_MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(3),
     DEFAULT_MODEL: z.string().min(1).default("gpt-4o"),
     FAST_MODEL: z.string().min(1).default("gpt-4o-mini"),
     REASONING_MODEL: z.string().min(1).default("o1"),
@@ -128,6 +144,7 @@ const envSchema = z.object({
     WEB_SEARCH_MAX_RESULTS: z.coerce.number().int().positive().max(10).default(5),
     ENABLE_TIME: envBoolean.optional().default(true),
     ENABLE_TOOL_ROUTER: envBoolean.optional().default(true),
+    ENABLE_MEMORY_LOOKUP: envBoolean.optional().default(true),
     // tool-scaffold:insert:env
     ENABLE_MEMORY: envBoolean.optional().default(true),
     AUTO_STORE_MEMORY: envBoolean.optional().default(true),
@@ -145,6 +162,7 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     const openAiKey = parsed.OPENAI_API_KEY?.trim();
     const databaseUrl = parsed.DATABASE_URL?.trim();
     const webAppOrigin = parsed.WEB_APP_ORIGIN?.trim();
+    const apiKey = parsed.API_KEY?.trim();
 
     if (parsed.PERSISTENCE_DRIVER === "postgres" && !databaseUrl) {
         throw new Error("DATABASE_URL is required when PERSISTENCE_DRIVER=postgres");
@@ -157,6 +175,10 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             port: parsed.PORT,
             defaultUserId: parsed.DEFAULT_USER_ID,
             defaultTemperature: parsed.DEFAULT_TEMPERATURE,
+            ...(apiKey ? { apiKey } : {}),
+            maxMessageLength: parsed.MAX_MESSAGE_LENGTH,
+            rateLimitWindowMs: parsed.RATE_LIMIT_WINDOW_MS,
+            rateLimitMaxRequests: parsed.RATE_LIMIT_MAX_REQUESTS,
         },
         web: {
             ...(webAppOrigin ? { appOrigin: webAppOrigin } : {}),
@@ -179,6 +201,8 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             openai: {
                 ...(openAiKey ? { apiKey: openAiKey } : {}),
                 baseUrl: parsed.OPENAI_BASE_URL,
+                timeoutMs: parsed.LLM_TIMEOUT_MS,
+                maxRetries: parsed.LLM_MAX_RETRIES,
             },
         },
         models: {
@@ -209,6 +233,14 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             },
             toolRouter: {
                 enabled: parsed.ENABLE_TOOL_ROUTER,
+                perChannel: {
+                    terminal: true,
+                    http: true,
+                    telegram: true,
+                },
+            },
+            memoryLookup: {
+                enabled: parsed.ENABLE_MEMORY_LOOKUP,
                 perChannel: {
                     terminal: true,
                     http: true,

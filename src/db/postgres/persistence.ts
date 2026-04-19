@@ -530,33 +530,85 @@ export class PostgresMemoryRepository implements MemoryRepository {
         this.pool = pool;
     }
 
-    public async save(entry: MemoryEntry): Promise<void> {
-        await this.pool.query(
+    public async save(entry: MemoryEntry, embedding?: number[]): Promise<void> {
+        if (embedding && embedding.length > 0) {
+            const embeddingLiteral = `[${embedding.join(",")}]`;
+            await this.pool.query(
+                `
+                insert into memory_entries
+                    (id, user_id, conversation_id, source_message_id, kind, content, keywords, confidence, created_at, last_accessed_at, embedding)
+                values
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector)
+                on conflict (id) do update
+                set kind = excluded.kind,
+                    content = excluded.content,
+                    keywords = excluded.keywords,
+                    confidence = excluded.confidence,
+                    last_accessed_at = excluded.last_accessed_at,
+                    embedding = excluded.embedding
+                `,
+                [
+                    entry.id,
+                    entry.userId,
+                    entry.conversationId ?? null,
+                    entry.sourceMessageId ?? null,
+                    entry.kind,
+                    entry.content,
+                    entry.keywords,
+                    entry.confidence,
+                    entry.createdAt,
+                    entry.lastAccessedAt,
+                    embeddingLiteral,
+                ],
+            );
+        } else {
+            await this.pool.query(
+                `
+                insert into memory_entries
+                    (id, user_id, conversation_id, source_message_id, kind, content, keywords, confidence, created_at, last_accessed_at)
+                values
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                on conflict (id) do update
+                set kind = excluded.kind,
+                    content = excluded.content,
+                    keywords = excluded.keywords,
+                    confidence = excluded.confidence,
+                    last_accessed_at = excluded.last_accessed_at
+                `,
+                [
+                    entry.id,
+                    entry.userId,
+                    entry.conversationId ?? null,
+                    entry.sourceMessageId ?? null,
+                    entry.kind,
+                    entry.content,
+                    entry.keywords,
+                    entry.confidence,
+                    entry.createdAt,
+                    entry.lastAccessedAt,
+                ],
+            );
+        }
+    }
+
+    public async searchByEmbedding(userId: string, embedding: number[], limit: number): Promise<Array<{ entry: MemoryEntry; similarity: number }>> {
+        const embeddingLiteral = `[${embedding.join(",")}]`;
+        const result = await this.pool.query(
             `
-            insert into memory_entries
-                (id, user_id, conversation_id, source_message_id, kind, content, keywords, confidence, created_at, last_accessed_at)
-            values
-                ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            on conflict (id) do update
-            set kind = excluded.kind,
-                content = excluded.content,
-                keywords = excluded.keywords,
-                confidence = excluded.confidence,
-                last_accessed_at = excluded.last_accessed_at
+            select id, user_id, conversation_id, source_message_id, kind, content, keywords, confidence, created_at, last_accessed_at,
+                   1 - (embedding <=> $1::vector) as similarity
+            from memory_entries
+            where user_id = $2 and embedding is not null
+            order by embedding <=> $1::vector
+            limit $3
             `,
-            [
-                entry.id,
-                entry.userId,
-                entry.conversationId ?? null,
-                entry.sourceMessageId ?? null,
-                entry.kind,
-                entry.content,
-                entry.keywords,
-                entry.confidence,
-                entry.createdAt,
-                entry.lastAccessedAt,
-            ],
+            [embeddingLiteral, userId, limit],
         );
+
+        return result.rows.map((row: Record<string, unknown>) => ({
+            entry: this.mapMemoryRow(row),
+            similarity: Number(row.similarity),
+        }));
     }
 
     public async listByUser(userId: string): Promise<MemoryEntry[]> {
@@ -570,41 +622,43 @@ export class PostgresMemoryRepository implements MemoryRepository {
             [userId],
         );
 
-        return result.rows.map((row): MemoryEntry => {
-            const typed = row as {
-                id: string;
-                user_id: string;
-                conversation_id: string | null;
-                source_message_id: string | null;
-                kind: MemoryEntry["kind"];
-                content: string;
-                keywords: string[];
-                confidence: number;
-                created_at: string;
-                last_accessed_at: string;
-            };
+        return result.rows.map((row: Record<string, unknown>) => this.mapMemoryRow(row));
+    }
 
-            const entry: MemoryEntry = {
-                id: typed.id,
-                userId: typed.user_id,
-                kind: typed.kind,
-                content: typed.content,
-                keywords: typed.keywords ?? [],
-                confidence: Number(typed.confidence),
-                createdAt: toDate(typed.created_at),
-                lastAccessedAt: toDate(typed.last_accessed_at),
-            };
+    private mapMemoryRow(row: Record<string, unknown>): MemoryEntry {
+        const typed = row as {
+            id: string;
+            user_id: string;
+            conversation_id: string | null;
+            source_message_id: string | null;
+            kind: MemoryEntry["kind"];
+            content: string;
+            keywords: string[];
+            confidence: number;
+            created_at: string;
+            last_accessed_at: string;
+        };
 
-            if (typed.conversation_id) {
-                entry.conversationId = typed.conversation_id;
-            }
+        const entry: MemoryEntry = {
+            id: typed.id,
+            userId: typed.user_id,
+            kind: typed.kind,
+            content: typed.content,
+            keywords: typed.keywords ?? [],
+            confidence: Number(typed.confidence),
+            createdAt: toDate(typed.created_at),
+            lastAccessedAt: toDate(typed.last_accessed_at),
+        };
 
-            if (typed.source_message_id) {
-                entry.sourceMessageId = typed.source_message_id;
-            }
+        if (typed.conversation_id) {
+            entry.conversationId = typed.conversation_id;
+        }
 
-            return entry;
-        });
+        if (typed.source_message_id) {
+            entry.sourceMessageId = typed.source_message_id;
+        }
+
+        return entry;
     }
 
     public async touch(memoryId: string, accessedAt: Date): Promise<void> {

@@ -8,9 +8,18 @@ import type {
 } from "@/types/api";
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (API_KEY) {
+    headers.Authorization = `Bearer ${API_KEY}`;
+  }
+  return headers;
+}
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(`${BASE}${url}`);
+  const res = await fetch(`${BASE}${url}`, { headers: authHeaders() });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body.error ?? `Request failed: ${res.status}`);
@@ -40,6 +49,7 @@ export async function fetchMessages(conversationId: string): Promise<MessageReco
 }
 
 export interface StreamCallbacks {
+  onToken?: (text: string) => void;
   onResponse: (response: AssistantResponse) => void;
   onError: (error: string) => void;
   onDone: () => void;
@@ -55,7 +65,7 @@ export function sendMessageStream(
     try {
       const res = await fetch(`${BASE}/chat/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(request),
         signal: controller.signal,
       });
@@ -89,7 +99,14 @@ export function sendMessageStream(
             else if (line.startsWith("data: ")) data = line.slice(6);
           }
 
-          if (eventType === "response" && data) {
+          if (eventType === "delta" && data) {
+            try {
+              const chunk = JSON.parse(data) as { text: string };
+              if (chunk.text && callbacks.onToken) {
+                callbacks.onToken(chunk.text);
+              }
+            } catch { /* ignore malformed delta */ }
+          } else if (eventType === "response" && data) {
             try {
               callbacks.onResponse(JSON.parse(data) as AssistantResponse);
             } catch {

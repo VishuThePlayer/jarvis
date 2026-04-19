@@ -26,14 +26,15 @@ export async function createApplication(): Promise<Application> {
         config.persistence.driver === "postgres"
             ? await createPostgresPersistence({ config, logger })
             : new InMemoryPersistence();
+    const tools = new ToolRegistry({ config, logger, memories: persistence.memories });
+    const models = new ModelProviderRegistry({ config, logger });
     const memory = new MemoryService({
         config,
         logger,
         memories: persistence.memories,
         conversations: persistence.conversations,
+        models,
     });
-    const tools = new ToolRegistry({ config, logger });
-    const models = new ModelProviderRegistry({ config, logger });
     const toolRouter = new ToolRouter({ config, logger, models });
     const agents = new AgentRegistry(new JarvisAgent(config));
     const orchestrator = new JarvisOrchestrator({

@@ -35,6 +35,7 @@ interface ChatState {
   isLoading: boolean;
   isSidebarOpen: boolean;
   error: string | null;
+  streamingContent: string;
 
   // Chat options
   allowWebSearch: boolean;
@@ -71,6 +72,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoading: false,
   isSidebarOpen: true,
   error: null,
+  streamingContent: "",
   allowWebSearch: false,
   preferWebSearch: false,
   _abortController: null,
@@ -146,6 +148,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       error: null,
     });
 
+    const streamingMsgId = `streaming_${Date.now()}`;
+
     const controller = sendMessageStream(
       {
         message: content,
@@ -155,6 +159,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
         preferWebSearch: state.preferWebSearch || undefined,
       },
       {
+        onToken: (text: string) => {
+          const current = get();
+          const newContent = current.streamingContent + text;
+          const hasPlaceholder = current.messages.some((m) => m.id === streamingMsgId);
+
+          if (!hasPlaceholder) {
+            const placeholder: MessageRecord = {
+              id: streamingMsgId,
+              conversationId: current.activeConversationId ?? "",
+              role: "assistant",
+              content: newContent,
+              channel: "http",
+              userId: "jarvis",
+              createdAt: new Date().toISOString(),
+            };
+            set({
+              messages: [...current.messages, placeholder],
+              streamingContent: newContent,
+            });
+          } else {
+            set({
+              messages: current.messages.map((m) =>
+                m.id === streamingMsgId ? { ...m, content: newContent } : m,
+              ),
+              streamingContent: newContent,
+            });
+          }
+        },
         onResponse: (response: AssistantResponse) => {
           const current = get();
 
@@ -192,15 +224,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
             updatedAt: new Date().toISOString(),
           };
 
-          // Fix the user message's conversationId if it was empty
-          const fixedMessages = current.messages.map((m) =>
-            m.id === userMsg.id
-              ? { ...m, conversationId: response.conversationId }
-              : m,
-          );
+          // Fix user message conversationId and replace streaming placeholder
+          const fixedMessages = current.messages
+            .filter((m) => m.id !== streamingMsgId)
+            .map((m) =>
+              m.id === userMsg.id
+                ? { ...m, conversationId: response.conversationId }
+                : m,
+            );
 
           set({
             messages: [...fixedMessages, assistantMsg],
+            streamingContent: "",
             responseMeta: {
               ...current.responseMeta,
               [response.messageId]: meta,
@@ -216,7 +251,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           set({ error });
         },
         onDone: () => {
-          set({ isLoading: false, _abortController: null });
+          set({ isLoading: false, _abortController: null, streamingContent: "" });
         },
       },
     );

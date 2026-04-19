@@ -50,5 +50,5 @@ export function telegramPlainFallback(parsedHtml: string): string {
         .replace(/&amp;/gi, "&")
         .replace(/\n{3,}/g, "\n\n")
         .trim()
-        .slice(0, 4000);
+        .slice(0, 4096);
 }

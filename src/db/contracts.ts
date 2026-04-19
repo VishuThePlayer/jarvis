@@ -40,7 +40,8 @@ export interface RunRepository {
 }
 
 export interface MemoryRepository {
-    save(entry: MemoryEntry): Promise<void>;
+    save(entry: MemoryEntry, embedding?: number[]): Promise<void>;
     listByUser(userId: string): Promise<MemoryEntry[]>;
     touch(memoryId: string, accessedAt: Date): Promise<void>;
+    searchByEmbedding?(userId: string, embedding: number[], limit: number): Promise<Array<{ entry: MemoryEntry; similarity: number }>>;
 }

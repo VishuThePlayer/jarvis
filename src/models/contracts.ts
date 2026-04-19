@@ -1,10 +1,11 @@
-import type { ModelCapability, ModelDescriptor, ModelInvocation, ModelResult, ProviderKind } from "../types/core.js";
+import type { ModelCapability, ModelDescriptor, ModelInvocation, ModelResult, ProviderKind, StreamChunk } from "../types/core.js";
 
 export interface ModelProvider {
     readonly kind: ProviderKind;
     isConfigured(): boolean;
     supports(capability: ModelCapability): boolean;
     generate(invocation: ModelInvocation): Promise<ModelResult>;
+    generateStream(invocation: ModelInvocation): AsyncIterable<StreamChunk>;
     embed(texts: string[]): Promise<number[][]>;
 }
 

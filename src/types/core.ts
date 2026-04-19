@@ -162,3 +162,16 @@ export interface ModelDescriptor {
     isConfigured: boolean;
     capabilities: ModelCapability[];
 }
+
+export interface StreamChunk {
+    text: string;
+    done: boolean;
+    usage?: TokenUsage;
+    result?: ModelResult;
+}
+
+export type StreamEvent =
+    | { type: "delta"; text: string }
+    | { type: "response"; response: AssistantResponse }
+    | { type: "error"; error: string }
+    | { type: "done" };

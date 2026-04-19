@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
-import type { ModelDescriptor, ModelInvocation, ModelResult, ModelSlot, UserRequest } from "../types/core.js";
+import type { ModelDescriptor, ModelInvocation, ModelResult, ModelSlot, StreamChunk, UserRequest } from "../types/core.js";
 import type { ProviderHealth, ResolvedModelPlan } from "./contracts.js";
 import { OpenAIModelProvider } from "./providers/openai.js";
 
@@ -17,7 +17,7 @@ export class ModelProviderRegistry {
     public constructor(dependencies: ModelProviderRegistryDependencies) {
         this.config = dependencies.config;
         this.logger = dependencies.logger;
-        this.provider = new OpenAIModelProvider(this.config);
+        this.provider = new OpenAIModelProvider(this.config, this.logger);
     }
 
     public listModels(): ModelDescriptor[] {
@@ -76,6 +76,17 @@ export class ModelProviderRegistry {
 
     public async generate(invocation: ModelInvocation, plan: ResolvedModelPlan): Promise<ModelResult> {
         return plan.primary.provider.generate({
+            ...invocation,
+            model: plan.primary.model,
+        });
+    }
+
+    public async embed(texts: string[]): Promise<number[][]> {
+        return this.provider.embed(texts);
+    }
+
+    public async *generateStream(invocation: ModelInvocation, plan: ResolvedModelPlan): AsyncIterable<StreamChunk> {
+        yield* plan.primary.provider.generateStream({
             ...invocation,
             model: plan.primary.model,
         });

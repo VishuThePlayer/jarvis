@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config/index.js";
 import type { ConversationRepository, MemoryRepository } from "../db/contracts.js";
+import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
 import type { ConversationSummary, MemoryEntry, MessageRecord, UserRequest } from "../types/core.js";
 import { createId } from "../utils/id.js";
@@ -15,6 +16,7 @@ interface MemoryServiceDependencies {
     logger: Logger;
     memories: MemoryRepository;
     conversations: ConversationRepository;
+    models?: ModelProviderRegistry;
 }
 
 export class MemoryService {
@@ -22,12 +24,16 @@ export class MemoryService {
     private readonly logger: Logger;
     private readonly memories: MemoryRepository;
     private readonly conversations: ConversationRepository;
+    private readonly models?: ModelProviderRegistry;
 
     public constructor(dependencies: MemoryServiceDependencies) {
         this.config = dependencies.config;
         this.logger = dependencies.logger;
         this.memories = dependencies.memories;
         this.conversations = dependencies.conversations;
+        if (dependencies.models) {
+            this.models = dependencies.models;
+        }
     }
 
     public async retrieveContext(input: {
@@ -40,17 +46,64 @@ export class MemoryService {
         }
 
         const summary = await this.conversations.getLatestSummary(input.conversationId);
+        const limit = this.config.memory.retrievalLimit;
+
         const allEntries = await this.memories.listByUser(input.userId);
         const queryTokens = tokenize(input.query);
-        const ranked = allEntries
-            .map((entry) => ({
-                entry,
-                score: keywordOverlapScore(queryTokens, entry.keywords) + this.kindBoost(entry.kind),
-            }))
-            .filter((candidate) => candidate.score > 0)
-            .sort((left, right) => right.score - left.score)
-            .slice(0, this.config.memory.retrievalLimit)
-            .map((candidate) => candidate.entry);
+
+        const keywordScores = new Map<string, number>();
+        for (const entry of allEntries) {
+            const score = keywordOverlapScore(queryTokens, entry.keywords) + this.kindBoost(entry.kind);
+            if (score > 0) {
+                keywordScores.set(entry.id, score);
+            }
+        }
+
+        let ranked: MemoryEntry[];
+
+        const canUseEmbeddings = this.config.persistence.pgvector.enabled
+            && this.models
+            && this.memories.searchByEmbedding;
+
+        if (canUseEmbeddings) {
+            try {
+                const [queryEmbedding] = await this.models!.embed([input.query]);
+                const embeddingResults = await this.memories.searchByEmbedding!(input.userId, queryEmbedding!, limit * 2);
+
+                const embeddingScores = new Map<string, number>();
+                const embeddingEntries = new Map<string, MemoryEntry>();
+                for (const { entry, similarity } of embeddingResults) {
+                    embeddingScores.set(entry.id, similarity);
+                    embeddingEntries.set(entry.id, entry);
+                }
+
+                const allIds = new Set([...keywordScores.keys(), ...embeddingScores.keys()]);
+                const entryMap = new Map(allEntries.map((e) => [e.id, e]));
+                for (const [id, entry] of embeddingEntries) {
+                    if (!entryMap.has(id)) entryMap.set(id, entry);
+                }
+
+                const maxKeyword = Math.max(...keywordScores.values(), 1);
+
+                const hybridScored = [...allIds]
+                    .map((id) => {
+                        const kw = (keywordScores.get(id) ?? 0) / maxKeyword;
+                        const emb = embeddingScores.get(id) ?? 0;
+                        return { id, score: 0.4 * kw + 0.6 * emb };
+                    })
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, limit);
+
+                ranked = hybridScored.map((s) => entryMap.get(s.id)!).filter(Boolean);
+            } catch (error) {
+                this.logger.warn("Embedding retrieval failed, falling back to keyword search", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                ranked = this.keywordRank(allEntries, keywordScores, limit);
+            }
+        } else {
+            ranked = this.keywordRank(allEntries, keywordScores, limit);
+        }
 
         const accessedAt = new Date();
         for (const entry of ranked) {
@@ -58,6 +111,13 @@ export class MemoryService {
         }
 
         return { entries: ranked, summary };
+    }
+
+    private keywordRank(entries: MemoryEntry[], scores: Map<string, number>, limit: number): MemoryEntry[] {
+        return entries
+            .filter((e) => (scores.get(e.id) ?? 0) > 0)
+            .sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0))
+            .slice(0, limit);
     }
 
     public async captureTurn(input: {
@@ -80,14 +140,25 @@ export class MemoryService {
         const existing = await this.memories.listByUser(input.request.userId);
         const existingContent = new Set(existing.map((entry) => entry.content.toLowerCase()));
         const candidates = this.extractCandidates(input.request.message, input.response.id, input.request);
+        const newCandidates = candidates.filter((c) => !existingContent.has(c.content.toLowerCase()));
+
+        let embeddings: number[][] | undefined;
+        if (newCandidates.length > 0 && this.config.persistence.pgvector.enabled && this.models) {
+            try {
+                embeddings = await this.models.embed(newCandidates.map((c) => c.content));
+            } catch (error) {
+                this.logger.warn("Failed to embed memories, saving without embeddings", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+
         const writes: MemoryEntry[] = [];
 
-        for (const candidate of candidates) {
-            if (existingContent.has(candidate.content.toLowerCase())) {
-                continue;
-            }
-
-            await this.memories.save(candidate);
+        for (let i = 0; i < newCandidates.length; i++) {
+            const candidate = newCandidates[i]!;
+            const embedding = embeddings?.[i];
+            await this.memories.save(candidate, embedding);
             writes.push(candidate);
         }
 

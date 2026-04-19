@@ -40,6 +40,7 @@ export function MessageArea() {
   const messages = useChatStore((s) => s.messages);
   const responseMeta = useChatStore((s) => s.responseMeta);
   const isLoading = useChatStore((s) => s.isLoading);
+  const streamingContent = useChatStore((s) => s.streamingContent);
   const error = useChatStore((s) => s.error);
   const clearError = useChatStore((s) => s.clearError);
   const sendMessage = useChatStore((s) => s.sendMessage);
@@ -122,7 +123,7 @@ export function MessageArea() {
               isLast={i === lastMessageIndex}
             />
           ))}
-          {isLoading && <TypingIndicator />}
+          {isLoading && streamingContent === "" && <TypingIndicator />}
           {error && (
             <div className="animate-fade-in-scale mx-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive backdrop-blur-sm">
               <div className="flex items-center justify-between">

@@ -3,6 +3,7 @@ import type { ModelInvocation, ToolCallResult, ToolParameterDefinition, UserRequ
 import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
 import type { CommandToolDescriptor } from "./contracts.js";
+import { extractMemoryLookupIntent } from "./memory-lookup.js";
 import { extractTimeIntent } from "./time.js";
 
 export interface ToolRoute {
@@ -49,6 +50,12 @@ export class ToolRouter {
         if (timeTool && timeIntent) {
             const command = timeIntent.place ? `${timeTool.command} ${timeIntent.place}` : timeTool.command;
             return { tool: timeTool.name, command };
+        }
+
+        const memoryTool = routableTools.find((tool) => tool.name === "memory-lookup");
+        const memoryIntent = memoryTool ? extractMemoryLookupIntent(request.message) : null;
+        if (memoryTool && memoryIntent) {
+            return { tool: memoryTool.name, command: `${memoryTool.command} ${memoryIntent.query}` };
         }
 
         if (routableTools.length < 2) {

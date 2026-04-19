@@ -16,15 +16,24 @@ interface TelegramUpdate {
     message?: {
         message_id: number;
         text?: string;
+        caption?: string;
+        photo?: Array<{ file_id: string; width: number; height: number }>;
+        document?: { file_id: string; file_name?: string; mime_type?: string };
         chat: {
             id: number;
+            type: "private" | "group" | "supergroup" | "channel";
             username?: string;
         };
         from?: {
             id: number;
+            is_bot?: boolean;
             username?: string;
             first_name?: string;
         };
+        reply_to_message?: {
+            from?: { id: number; is_bot?: boolean };
+        };
+        entities?: Array<{ type: string; offset: number; length: number }>;
     };
 }
 
@@ -58,6 +67,8 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     private offset = 0;
     private pollTask?: Promise<void>;
     private pollAbort: AbortController | undefined;
+    private botUserId?: number;
+    private botUsername?: string;
 
     public constructor(dependencies: TelegramChannelDependencies) {
         this.config = dependencies.config;
@@ -77,6 +88,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
         this.running = true;
         await this.clearWebhook();
+        await this.fetchBotIdentity();
         this.pollTask = this.pollLoop();
         this.logger.info("Telegram channel started");
     }
@@ -175,12 +187,26 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
     private async handleUpdate(update: TelegramUpdate): Promise<void> {
         const message = update.message;
-        if (!message?.text) {
+        if (!message) return;
+
+        const isGroup = message.chat.type === "group" || message.chat.type === "supergroup";
+        if (isGroup && !this.isBotAddressed(message)) return;
+
+        const text = message.text?.trim();
+        const caption = message.caption?.trim();
+        const content = text ?? caption;
+
+        if (!content) {
+            if (message.photo || message.document) {
+                await this.sendMessage(
+                    message.chat.id,
+                    "I received your file, but I can only process text messages and captions for now.",
+                );
+            }
             return;
         }
 
-        const text = message.text.trim();
-        if (text === "/start") {
+        if (content === "/start") {
             await this.sendMessage(
                 message.chat.id,
                 "<b>Jarvis</b> is online.\n\nSend a message or use /models for configured models.",
@@ -188,7 +214,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             return;
         }
 
-        if (text === "/models") {
+        if (content === "/models") {
             const modelText = this.orchestrator
                 .listModels()
                 .map((model) => `- ${model.provider}:${model.id} [${model.roles.join(", ")}]`)
@@ -198,12 +224,22 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             return;
         }
 
-        const response = await this.orchestrator.handleRequest({
+        let userMessage = content;
+        if (!text && caption) {
+            if (message.photo) userMessage = `[User sent a photo] ${caption}`;
+            else if (message.document) userMessage = `[User sent a document: ${message.document.file_name ?? "unknown"}] ${caption}`;
+        }
+
+        await this.sendChatAction(message.chat.id, "typing");
+
+        let fullContent = "";
+
+        for await (const event of this.orchestrator.handleRequestStream({
             requestId: createId("req"),
             channel: "telegram",
             userId: `telegram:${message.from?.id ?? message.chat.id}`,
             conversationId: `telegram:${message.chat.id}`,
-            message: text,
+            message: userMessage,
             attachments: [],
             metadata: {
                 ...(message.from?.username ?? message.chat.username
@@ -211,9 +247,58 @@ export class TelegramChannelAdapter implements ChannelAdapter {
                     : {}),
                 sourceMessageId: String(message.message_id),
             },
-        });
+        })) {
+            if (event.type === "delta") {
+                fullContent += event.text;
+            } else if (event.type === "response") {
+                fullContent = event.response.content;
+            } else if (event.type === "error") {
+                fullContent = `Error: ${event.error}`;
+            }
+        }
 
-        await this.sendMessage(message.chat.id, response.content);
+        await this.sendMessage(message.chat.id, fullContent);
+    }
+
+    private isBotAddressed(message: NonNullable<TelegramUpdate["message"]>): boolean {
+        if (message.chat.type === "private") return true;
+
+        if (message.reply_to_message?.from?.id === this.botUserId) return true;
+
+        const text = message.text ?? message.caption ?? "";
+        if (this.botUsername && text.includes(`@${this.botUsername}`)) return true;
+
+        if (message.entities?.some((e) => e.type === "bot_command")) return true;
+
+        return false;
+    }
+
+    private async fetchBotIdentity(): Promise<void> {
+        try {
+            const response = await fetch(this.buildApiUrl("getMe"), { method: "POST" });
+            if (!response.ok) return;
+
+            const data = (await response.json()) as TelegramResponse<{ id: number; username?: string }>;
+            if (data.ok) {
+                this.botUserId = data.result.id;
+                if (data.result.username) {
+                    this.botUsername = data.result.username;
+                }
+                this.logger.info("Telegram bot identity resolved", { id: this.botUserId, username: this.botUsername });
+            }
+        } catch {
+            this.logger.warn("Failed to fetch Telegram bot identity");
+        }
+    }
+
+    private async sendChatAction(chatId: number, action: string): Promise<void> {
+        try {
+            await fetch(this.buildApiUrl("sendChatAction"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chat_id: chatId, action }),
+            });
+        } catch { /* best-effort */ }
     }
 
     private async getUpdates(input: {
@@ -259,7 +344,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
     private async sendMessage(chatId: number, text: string): Promise<void> {
         const fallbackText = "Sorry - I could not generate a reply. Please try again.";
-        const trimmed = (text ?? "").slice(0, 4000).trim();
+        const trimmed = (text ?? "").slice(0, 4096).trim();
         const initialText = trimmed.length > 0 ? trimmed : fallbackText;
 
         let response = await fetch(this.buildApiUrl("sendMessage"), {
@@ -297,7 +382,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
                 detail: (description ?? detail).slice(0, 500),
             });
 
-            const plain = telegramPlainFallback(initialText).slice(0, 4000).trim();
+            const plain = telegramPlainFallback(initialText).slice(0, 4096).trim();
             const safePlain = plain.length > 0 ? plain : fallbackText;
 
             response = await fetch(this.buildApiUrl("sendMessage"), {
