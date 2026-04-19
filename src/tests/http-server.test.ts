@@ -1,67 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentRegistry } from "../agents/registry/index.js";
-import { JarvisAgent } from "../agents/jarvis/index.js";
-import { type AppConfig, createConfig } from "../config/index.js";
-import { InMemoryPersistence } from "../db/in-memory.js";
-import { MemoryService } from "../memory/service.js";
-import { ModelProviderRegistry } from "../models/registry.js";
-import { Logger } from "../observability/logger.js";
-import { JarvisOrchestrator } from "../orchestrator/index.js";
 import { HttpServer } from "../server/http-server.js";
-import { ToolRegistry } from "../tools/registry.js";
-import { ToolRouter } from "../tools/tool-router.js";
-
-function createHttpConfig(): AppConfig {
-    const baseConfig = createConfig({
-        APP_ENV: "test",
-        LOG_LEVEL: "error",
-        PORT: "3001",
-        ENABLE_HTTP: "true",
-        ENABLE_TERMINAL: "false",
-        ENABLE_TELEGRAM: "false",
-        OPENAI_API_KEY: "test-key",
-        ENABLE_WEB_SEARCH: "false",
-        WEB_APP_ORIGIN: "http://localhost:5173",
-    });
-
-    return {
-        ...baseConfig,
-        app: {
-            ...baseConfig.app,
-            port: 0,
-        },
-    };
-}
+import { createTestStack } from "./helpers.js";
 
 function createServer() {
-    const config = createHttpConfig();
-    const logger = new Logger("error");
-    const persistence = new InMemoryPersistence();
-    const memory = new MemoryService({
-        config,
-        logger,
-        memories: persistence.memories,
-        conversations: persistence.conversations,
+    const stack = createTestStack({
+        ENABLE_HTTP: "true",
+        WEB_APP_ORIGIN: "http://localhost:5173",
     });
-    const models = new ModelProviderRegistry({ config, logger });
-    const agents = new AgentRegistry(new JarvisAgent(config));
-    const tools = new ToolRegistry({ config, logger });
-    const toolRouter = new ToolRouter({ config, logger, models });
-    const orchestrator = new JarvisOrchestrator({
-        config,
-        logger,
-        conversations: persistence.conversations,
-        runs: persistence.runs,
-        memory,
-        tools,
-        toolRouter,
-        models,
-        agents,
-    });
-    const server = new HttpServer({ config, logger, orchestrator });
-
-    return { server, persistence };
+    const config = { ...stack.config, app: { ...stack.config.app, port: 0 } };
+    const server = new HttpServer({ config, logger: stack.logger, orchestrator: stack.orchestrator });
+    return { server, persistence: stack.persistence };
 }
 
 function getServerPort(server: HttpServer) {

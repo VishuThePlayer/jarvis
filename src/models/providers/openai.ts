@@ -61,26 +61,41 @@ export class OpenAIModelProvider implements ModelProvider {
         return capability === "chat" || capability === "embeddings";
     }
 
-    public async generate(invocation: ModelInvocation): Promise<ModelResult> {
+    private getAuthenticatedBaseUrl(): { apiKey: string; baseUrl: string } {
         const apiKey = this.config.providers.openai.apiKey;
-        if (!apiKey) {
-            throw new Error("OpenAI provider is not configured.");
-        }
+        if (!apiKey) throw new Error("OpenAI provider is not configured.");
+        return { apiKey, baseUrl: this.config.providers.openai.baseUrl.replace(/\/$/, "") };
+    }
 
-        const baseUrl = this.config.providers.openai.baseUrl.replace(/\/$/, "");
+    private buildChatBody(invocation: ModelInvocation, extra?: Record<string, unknown>): Record<string, unknown> {
         const body: Record<string, unknown> = {
             model: invocation.model,
             messages: invocation.messages,
             temperature: invocation.temperature,
+            ...extra,
         };
+        if (invocation.tools && invocation.tools.length > 0) body.tools = invocation.tools;
+        if (invocation.tool_choice !== undefined) body.tool_choice = invocation.tool_choice;
+        return body;
+    }
 
-        if (invocation.tools && invocation.tools.length > 0) {
-            body.tools = invocation.tools;
-        }
+    private buildUsage(
+        apiUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined,
+        invocation: ModelInvocation,
+        outputText: string,
+    ) {
+        const inputFallback = tokenize(invocation.messages.map((m) => m.content).join(" ")).length;
+        const outputFallback = tokenize(outputText).length;
+        return {
+            inputTokens: apiUsage?.prompt_tokens ?? inputFallback,
+            outputTokens: apiUsage?.completion_tokens ?? outputFallback,
+            totalTokens: apiUsage?.total_tokens ?? inputFallback + outputFallback,
+        };
+    }
 
-        if (invocation.tool_choice !== undefined) {
-            body.tool_choice = invocation.tool_choice;
-        }
+    public async generate(invocation: ModelInvocation): Promise<ModelResult> {
+        const { apiKey, baseUrl } = this.getAuthenticatedBaseUrl();
+        const body = this.buildChatBody(invocation);
 
         const response = await this.fetchWithRetry(`${baseUrl}/chat/completions`, {
             method: "POST",
@@ -109,39 +124,13 @@ export class OpenAIModelProvider implements ModelProvider {
             model: invocation.model,
             text,
             ...(toolCalls ? { toolCalls } : {}),
-            usage: {
-                inputTokens:
-                    data.usage?.prompt_tokens ?? tokenize(invocation.messages.map((message) => message.content).join(" ")).length,
-                outputTokens: data.usage?.completion_tokens ?? tokenize(text).length,
-                totalTokens:
-                    data.usage?.total_tokens ??
-                    tokenize(invocation.messages.map((message) => message.content).join(" ")).length + tokenize(text).length,
-            },
+            usage: this.buildUsage(data.usage, invocation, text),
         };
     }
 
     public async *generateStream(invocation: ModelInvocation): AsyncIterable<StreamChunk> {
-        const apiKey = this.config.providers.openai.apiKey;
-        if (!apiKey) {
-            throw new Error("OpenAI provider is not configured.");
-        }
-
-        const baseUrl = this.config.providers.openai.baseUrl.replace(/\/$/, "");
-        const body: Record<string, unknown> = {
-            model: invocation.model,
-            messages: invocation.messages,
-            temperature: invocation.temperature,
-            stream: true,
-            stream_options: { include_usage: true },
-        };
-
-        if (invocation.tools && invocation.tools.length > 0) {
-            body.tools = invocation.tools;
-        }
-
-        if (invocation.tool_choice !== undefined) {
-            body.tool_choice = invocation.tool_choice;
-        }
+        const { apiKey, baseUrl } = this.getAuthenticatedBaseUrl();
+        const body = this.buildChatBody(invocation, { stream: true, stream_options: { include_usage: true } });
 
         const response = await this.fetchWithRetry(`${baseUrl}/chat/completions`, {
             method: "POST",
@@ -238,12 +227,7 @@ export class OpenAIModelProvider implements ModelProvider {
             model: invocation.model,
             text: accumulatedText,
             ...(toolCalls ? { toolCalls } : {}),
-            usage: {
-                inputTokens: finalUsage?.prompt_tokens ?? tokenize(invocation.messages.map((m) => m.content).join(" ")).length,
-                outputTokens: finalUsage?.completion_tokens ?? tokenize(accumulatedText).length,
-                totalTokens: finalUsage?.total_tokens ??
-                    tokenize(invocation.messages.map((m) => m.content).join(" ")).length + tokenize(accumulatedText).length,
-            },
+            usage: this.buildUsage(finalUsage, invocation, accumulatedText),
         };
 
         yield { text: "", done: true, ...(result.usage ? { usage: result.usage } : {}), result };
@@ -296,12 +280,7 @@ export class OpenAIModelProvider implements ModelProvider {
     }
 
     public async embed(texts: string[]): Promise<number[][]> {
-        const apiKey = this.config.providers.openai.apiKey;
-        if (!apiKey) {
-            throw new Error("OpenAI provider is not configured.");
-        }
-
-        const baseUrl = this.config.providers.openai.baseUrl.replace(/\/$/, "");
+        const { apiKey, baseUrl } = this.getAuthenticatedBaseUrl();
 
         const response = await this.fetchWithRetry(`${baseUrl}/embeddings`, {
             method: "POST",

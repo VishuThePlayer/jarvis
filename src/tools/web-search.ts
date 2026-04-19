@@ -1,8 +1,9 @@
 import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
 import type { ToolCallRecord, UserRequest } from "../types/core.js";
-import { createId } from "../utils/id.js";
+import { errorMessage } from "../utils/error.js";
 import { truncate } from "../utils/text.js";
+import { createToolRecord } from "../utils/tool-record.js";
 
 interface WebSearchToolDependencies {
     config: AppConfig;
@@ -108,26 +109,11 @@ export class WebSearchTool {
                     ? `Web search results for "${query}":\n${bullets.map((bullet) => `- ${bullet}`).join("\n")}`
                     : `No useful web search results were found for "${query}".`;
 
-            return {
-                id: createId("tool"),
-                name: "web-search",
-                input: query,
-                output,
-                success: true,
-                createdAt,
-            };
+            return createToolRecord("web-search", query, true, output);
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.logger.warn("Web search failed", { query, error: message });
-
-            return {
-                id: createId("tool"),
-                name: "web-search",
-                input: query,
-                output: `Web search failed for "${query}": ${message}`,
-                success: false,
-                createdAt,
-            };
+            const msg = errorMessage(error);
+            this.logger.warn("Web search failed", { query, error: msg });
+            return createToolRecord("web-search", query, false, `Web search failed for "${query}": ${msg}`);
         }
     }
 }

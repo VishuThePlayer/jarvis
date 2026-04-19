@@ -1,9 +1,9 @@
-import type { Logger } from "../observability/logger.js";
 import type { AppConfig } from "../config/index.js";
-import { createId } from "../utils/id.js";
+import type { Logger } from "../observability/logger.js";
 import type { ToolCallRecord, UserRequest } from "../types/core.js";
-import type { CommandToolDescriptor } from "./contracts.js";
 import { keywordOverlapScore, normalizeWhitespace, tokenize } from "../utils/text.js";
+import { createToolRecord } from "../utils/tool-record.js";
+import type { CommandToolDescriptor } from "./contracts.js";
 
 interface TimeToolDependencies {
     config: AppConfig;
@@ -129,8 +129,8 @@ export class TimeTool {
         }
     }
 
-    private record(input: string, success: boolean, output: string): ToolCallRecord {
-        return { id: createId("tool"), name: "time", input, output, success, createdAt: new Date() };
+    private record(input: string, success: boolean, output: string) {
+        return createToolRecord("time", input, success, output);
     }
 
     private parsePlace(message: string): string | null | undefined {

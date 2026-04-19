@@ -1,4 +1,4 @@
-import type { ModelCapability, ModelDescriptor, ModelInvocation, ModelResult, ProviderKind, StreamChunk } from "../types/core.js";
+import type { ModelCapability, ModelInvocation, ModelResult, ProviderKind, StreamChunk } from "../types/core.js";
 
 export interface ModelProvider {
     readonly kind: ProviderKind;
@@ -22,8 +22,4 @@ export interface ProviderHealth {
     provider: ProviderKind;
     configured: boolean;
     capabilities: ModelCapability[];
-}
-
-export interface ModelProviderRegistryLike {
-    listModels(): ModelDescriptor[];
 }

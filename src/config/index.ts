@@ -156,6 +156,8 @@ const envSchema = z.object({
     DATABASE_URL: z.string().optional(),
 });
 
+const ALL_CHANNELS_ENABLED: Record<ChannelKind, boolean> = { terminal: true, http: true, telegram: true };
+
 export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     const parsed = envSchema.parse(env);
     const telegram = parsed.TELEGRAM_BOT_TOKEN?.trim();
@@ -217,35 +219,19 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
                 enabled: parsed.ENABLE_WEB_SEARCH,
                 allowByDefault: parsed.ALLOW_WEB_SEARCH_BY_DEFAULT,
                 maxResults: parsed.WEB_SEARCH_MAX_RESULTS,
-                perChannel: {
-                    terminal: true,
-                    http: true,
-                    telegram: true,
-                },
+                perChannel: ALL_CHANNELS_ENABLED,
             },
             time: {
                 enabled: parsed.ENABLE_TIME,
-                perChannel: {
-                    terminal: true,
-                    http: true,
-                    telegram: true,
-                },
+                perChannel: ALL_CHANNELS_ENABLED,
             },
             toolRouter: {
                 enabled: parsed.ENABLE_TOOL_ROUTER,
-                perChannel: {
-                    terminal: true,
-                    http: true,
-                    telegram: true,
-                },
+                perChannel: ALL_CHANNELS_ENABLED,
             },
             memoryLookup: {
                 enabled: parsed.ENABLE_MEMORY_LOOKUP,
-                perChannel: {
-                    terminal: true,
-                    http: true,
-                    telegram: true,
-                },
+                perChannel: ALL_CHANNELS_ENABLED,
             },
             // tool-scaffold:insert:tools-value
         },

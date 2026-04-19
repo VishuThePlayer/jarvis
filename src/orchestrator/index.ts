@@ -9,14 +9,35 @@ import type { ToolRouter } from "../tools/tool-router.js";
 import type {
     AssistantResponse,
     ConversationRecord,
+    MemoryEntry,
     MessageRecord,
+    ModelInvocation,
+    ProviderKind,
     RunRecord,
     StreamEvent,
     ToolCallRecord,
     UserRequest,
 } from "../types/core.js";
+import { errorMessage } from "../utils/error.js";
 import { createId } from "../utils/id.js";
 import { toTitleFromMessage } from "../utils/text.js";
+
+interface RunContext {
+    conversation: ConversationRecord;
+    resolvedModels: ReturnType<ModelProviderRegistry["resolveForRequest"]>;
+    runId: string;
+}
+
+interface CommandToolResult {
+    toolCall: ToolCallRecord;
+    assistantMessage: MessageRecord;
+    response: AssistantResponse;
+}
+
+interface ModelContext extends RunContext {
+    invocation: ModelInvocation;
+    toolCalls: ToolCallRecord[];
+}
 
 export interface Orchestrator {
     handleRequest(request: UserRequest): Promise<AssistantResponse>;
@@ -88,7 +109,7 @@ export class JarvisOrchestrator implements Orchestrator {
         };
     }
 
-    public async handleRequest(request: UserRequest): Promise<AssistantResponse> {
+    private async initRun(request: UserRequest): Promise<RunContext> {
         const conversation = await this.conversations.ensureConversation({
             userId: request.userId,
             channel: request.channel,
@@ -98,15 +119,6 @@ export class JarvisOrchestrator implements Orchestrator {
 
         const resolvedModels = this.models.resolveForRequest(request);
         const runId = createId("run");
-        const userMessage: MessageRecord = {
-            id: createId("msg"),
-            conversationId: conversation.id,
-            role: "user",
-            content: request.message,
-            channel: request.channel,
-            userId: request.userId,
-            createdAt: new Date(),
-        };
 
         const runRecord: RunRecord = {
             id: runId,
@@ -121,79 +133,150 @@ export class JarvisOrchestrator implements Orchestrator {
         };
 
         await this.runs.create(runRecord);
-        await this.conversations.appendMessage(userMessage);
+        await this.conversations.appendMessage({
+            id: createId("msg"),
+            conversationId: conversation.id,
+            role: "user",
+            content: request.message,
+            channel: request.channel,
+            userId: request.userId,
+            createdAt: new Date(),
+        });
+
+        return { conversation, resolvedModels, runId };
+    }
+
+    private async tryCommandTool(request: UserRequest, ctx: RunContext): Promise<CommandToolResult | null> {
+        let commandToolCall = await this.tools.tryRunCommand(request);
+
+        if (!commandToolCall) {
+            const available = this.tools.listAvailableCommandTools(request.channel);
+            const route = await this.toolRouter.routeCommandTool(request, available);
+            if (route) {
+                commandToolCall = await this.tools.tryRunCommand({ ...request, message: route.command });
+            }
+        }
+
+        if (!commandToolCall) return null;
+
+        const toolCalls = [commandToolCall];
+        await this.persistToolMessages(ctx.conversation, request, toolCalls);
+
+        const assistantMessage: MessageRecord = {
+            id: createId("msg"),
+            conversationId: ctx.conversation.id,
+            role: "assistant",
+            content: commandToolCall.output,
+            channel: request.channel,
+            userId: request.userId,
+            provider: "openai",
+            model: "jarvis-command",
+            createdAt: new Date(),
+        };
+
+        await this.conversations.appendMessage(assistantMessage);
+        await this.runs.complete(ctx.runId, {
+            status: "completed",
+            completedAt: new Date(),
+            provider: "openai",
+            model: "jarvis-command",
+        });
+
+        return {
+            toolCall: commandToolCall,
+            assistantMessage,
+            response: {
+                messageId: assistantMessage.id,
+                conversationId: ctx.conversation.id,
+                content: assistantMessage.content,
+                toolCalls,
+                providerUsed: "openai",
+                modelUsed: "jarvis-command",
+                memoryWrites: [],
+            },
+        };
+    }
+
+    private async prepareModelContext(request: UserRequest, ctx: RunContext): Promise<ModelContext> {
+        const memoryContext = await this.memory.retrieveContext({
+            userId: request.userId,
+            conversationId: ctx.conversation.id,
+            query: request.message,
+        });
+
+        const toolCalls = await this.tools.runPreModelTools(request);
+        await this.persistToolMessages(ctx.conversation, request, toolCalls);
+
+        const historyLimit = this.config.orchestrator.historyMessageLimit;
+        const history = await this.conversations.listRecentMessages(ctx.conversation.id, historyLimit);
+        const invocation = await this.agents.getPrimary().prepareInvocation({
+            request,
+            conversation: ctx.conversation,
+            history,
+            memoryContext,
+            toolCalls,
+        });
+
+        return { ...ctx, invocation, toolCalls };
+    }
+
+    private async finalizeRun(
+        request: UserRequest,
+        ctx: RunContext,
+        assistantMessage: MessageRecord,
+        toolCalls: ToolCallRecord[],
+        provider: ProviderKind,
+        model: string,
+    ): Promise<{ memoryWrites: MemoryEntry[] }> {
+        await this.conversations.appendMessage(assistantMessage);
+
+        const historyLimit = this.config.orchestrator.historyMessageLimit;
+        const messageCount = await this.conversations.countMessages(ctx.conversation.id);
+        const recentMessages = await this.conversations.listRecentMessages(
+            ctx.conversation.id,
+            Math.max(8, historyLimit),
+        );
+        const memoryWrites = await this.memory.captureTurn({
+            request,
+            response: assistantMessage,
+            messageCount,
+            recentMessages,
+        });
+
+        await this.runs.complete(ctx.runId, {
+            status: "completed",
+            completedAt: new Date(),
+            provider,
+            model,
+        });
+
+        return { memoryWrites };
+    }
+
+    private async failRun(ctx: RunContext, request: UserRequest, error: unknown): Promise<never> {
+        const msg = errorMessage(error);
+        await this.runs.complete(ctx.runId, { status: "failed", completedAt: new Date(), error: msg });
+        this.logger.error("Request orchestration failed", {
+            requestId: request.requestId,
+            conversationId: ctx.conversation.id,
+            error: msg,
+        });
+        throw error;
+    }
+
+    public async handleRequest(request: UserRequest): Promise<AssistantResponse> {
+        const ctx = await this.initRun(request);
 
         try {
-            let commandToolCall = await this.tools.tryRunCommand(request);
+            const cmdResult = await this.tryCommandTool(request, ctx);
+            if (cmdResult) return cmdResult.response;
 
-            if (!commandToolCall) {
-                const availableCommandTools = this.tools.listAvailableCommandTools(request.channel);
-                const route = await this.toolRouter.routeCommandTool(request, availableCommandTools);
-                if (route) {
-                    commandToolCall = await this.tools.tryRunCommand({ ...request, message: route.command });
-                }
-            }
-
-            if (commandToolCall) {
-                const toolCalls = [commandToolCall];
-                await this.persistToolMessages(conversation, request, toolCalls);
-
-                const assistantMessage: MessageRecord = {
-                    id: createId("msg"),
-                    conversationId: conversation.id,
-                    role: "assistant",
-                    content: commandToolCall.output,
-                    channel: request.channel,
-                    userId: request.userId,
-                    provider: "openai",
-                    model: "jarvis-command",
-                    createdAt: new Date(),
-                };
-
-                await this.conversations.appendMessage(assistantMessage);
-
-                await this.runs.complete(runId, {
-                    status: "completed",
-                    completedAt: new Date(),
-                    provider: "openai",
-                    model: "jarvis-command",
-                });
-
-                return {
-                    messageId: assistantMessage.id,
-                    conversationId: conversation.id,
-                    content: assistantMessage.content,
-                    toolCalls,
-                    providerUsed: "openai",
-                    modelUsed: "jarvis-command",
-                    memoryWrites: [],
-                };
-            }
-
-            const memoryContext = await this.memory.retrieveContext({
-                userId: request.userId,
-                conversationId: conversation.id,
-                query: request.message,
-            });
-
-            const toolCalls = await this.tools.runPreModelTools(request);
-            await this.persistToolMessages(conversation, request, toolCalls);
-
-            const historyLimit = this.config.orchestrator.historyMessageLimit;
-            const history = await this.conversations.listRecentMessages(conversation.id, historyLimit);
-            const invocation = await this.agents.getPrimary().prepareInvocation({
-                request,
-                conversation,
-                history,
-                memoryContext,
-                toolCalls,
-            });
-
-            const result = await this.models.generate(invocation, resolvedModels);
+            const mctx = await this.prepareModelContext(request, ctx);
+            const result = await this.models.generate(mctx.invocation, mctx.resolvedModels);
 
             const assistantMessage: MessageRecord = {
                 id: createId("msg"),
-                conversationId: conversation.id,
+                conversationId: ctx.conversation.id,
                 role: "assistant",
                 content: result.text,
                 channel: request.channel,
@@ -203,174 +286,49 @@ export class JarvisOrchestrator implements Orchestrator {
                 createdAt: new Date(),
             };
 
-            await this.conversations.appendMessage(assistantMessage);
-
-            const messageCount = await this.conversations.countMessages(conversation.id);
-            const recentMessages = await this.conversations.listRecentMessages(
-                conversation.id,
-                Math.max(8, historyLimit),
-            );
-            const memoryWrites = await this.memory.captureTurn({
-                request,
-                response: assistantMessage,
-                messageCount,
-                recentMessages,
-            });
-
-            await this.runs.complete(runId, {
-                status: "completed",
-                completedAt: new Date(),
-                provider: result.provider,
-                model: result.model,
-            });
+            const { memoryWrites } = await this.finalizeRun(request, ctx, assistantMessage, mctx.toolCalls, result.provider, result.model);
 
             this.logger.info("Completed orchestration request", {
                 requestId: request.requestId,
-                conversationId: conversation.id,
+                conversationId: ctx.conversation.id,
                 provider: result.provider,
                 model: result.model,
-                toolCalls: toolCalls.length,
+                toolCalls: mctx.toolCalls.length,
                 memoryWrites: memoryWrites.length,
             });
 
             return {
                 messageId: assistantMessage.id,
-                conversationId: conversation.id,
+                conversationId: ctx.conversation.id,
                 content: assistantMessage.content,
-                toolCalls,
+                toolCalls: mctx.toolCalls,
                 providerUsed: result.provider,
                 modelUsed: result.model,
                 memoryWrites,
                 ...(result.usage ? { usage: result.usage } : {}),
             };
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-
-            await this.runs.complete(runId, {
-                status: "failed",
-                completedAt: new Date(),
-                error: message,
-            });
-
-            this.logger.error("Request orchestration failed", {
-                requestId: request.requestId,
-                conversationId: conversation.id,
-                error: message,
-            });
-
-            throw error;
+            return this.failRun(ctx, request, error);
         }
     }
 
     public async *handleRequestStream(request: UserRequest): AsyncIterable<StreamEvent> {
-        const conversation = await this.conversations.ensureConversation({
-            userId: request.userId,
-            channel: request.channel,
-            title: toTitleFromMessage(request.message),
-            ...(request.conversationId ? { conversationId: request.conversationId } : {}),
-        });
-
-        const resolvedModels = this.models.resolveForRequest(request);
-        const runId = createId("run");
-        const userMessage: MessageRecord = {
-            id: createId("msg"),
-            conversationId: conversation.id,
-            role: "user",
-            content: request.message,
-            channel: request.channel,
-            userId: request.userId,
-            createdAt: new Date(),
-        };
-
-        const runRecord: RunRecord = {
-            id: runId,
-            requestId: request.requestId,
-            conversationId: conversation.id,
-            userId: request.userId,
-            channel: request.channel,
-            provider: resolvedModels.primary.provider.kind,
-            model: resolvedModels.primary.model,
-            status: "running",
-            startedAt: new Date(),
-        };
-
-        await this.runs.create(runRecord);
-        await this.conversations.appendMessage(userMessage);
+        const ctx = await this.initRun(request);
 
         try {
-            let commandToolCall = await this.tools.tryRunCommand(request);
-
-            if (!commandToolCall) {
-                const availableCommandTools = this.tools.listAvailableCommandTools(request.channel);
-                const route = await this.toolRouter.routeCommandTool(request, availableCommandTools);
-                if (route) {
-                    commandToolCall = await this.tools.tryRunCommand({ ...request, message: route.command });
-                }
-            }
-
-            if (commandToolCall) {
-                const toolCalls = [commandToolCall];
-                await this.persistToolMessages(conversation, request, toolCalls);
-
-                const assistantMessage: MessageRecord = {
-                    id: createId("msg"),
-                    conversationId: conversation.id,
-                    role: "assistant",
-                    content: commandToolCall.output,
-                    channel: request.channel,
-                    userId: request.userId,
-                    provider: "openai",
-                    model: "jarvis-command",
-                    createdAt: new Date(),
-                };
-
-                await this.conversations.appendMessage(assistantMessage);
-                await this.runs.complete(runId, {
-                    status: "completed",
-                    completedAt: new Date(),
-                    provider: "openai",
-                    model: "jarvis-command",
-                });
-
-                yield {
-                    type: "response",
-                    response: {
-                        messageId: assistantMessage.id,
-                        conversationId: conversation.id,
-                        content: assistantMessage.content,
-                        toolCalls,
-                        providerUsed: "openai",
-                        modelUsed: "jarvis-command",
-                        memoryWrites: [],
-                    },
-                };
+            const cmdResult = await this.tryCommandTool(request, ctx);
+            if (cmdResult) {
+                yield { type: "response", response: cmdResult.response };
                 yield { type: "done" };
                 return;
             }
 
-            const memoryContext = await this.memory.retrieveContext({
-                userId: request.userId,
-                conversationId: conversation.id,
-                query: request.message,
-            });
-
-            const toolCalls = await this.tools.runPreModelTools(request);
-            await this.persistToolMessages(conversation, request, toolCalls);
-
-            const historyLimit = this.config.orchestrator.historyMessageLimit;
-            const history = await this.conversations.listRecentMessages(conversation.id, historyLimit);
-            const invocation = await this.agents.getPrimary().prepareInvocation({
-                request,
-                conversation,
-                history,
-                memoryContext,
-                toolCalls,
-            });
+            const mctx = await this.prepareModelContext(request, ctx);
 
             let fullText = "";
             let finalResult: import("../types/core.js").ModelResult | undefined;
 
-            for await (const chunk of this.models.generateStream(invocation, resolvedModels)) {
+            for await (const chunk of this.models.generateStream(mctx.invocation, mctx.resolvedModels)) {
                 if (!chunk.done && chunk.text) {
                     fullText += chunk.text;
                     yield { type: "delta", text: chunk.text };
@@ -383,15 +341,15 @@ export class JarvisOrchestrator implements Orchestrator {
 
             if (!finalResult) {
                 finalResult = {
-                    provider: resolvedModels.primary.provider.kind,
-                    model: resolvedModels.primary.model,
+                    provider: mctx.resolvedModels.primary.provider.kind,
+                    model: mctx.resolvedModels.primary.model,
                     text: fullText,
                 };
             }
 
             const assistantMessage: MessageRecord = {
                 id: createId("msg"),
-                conversationId: conversation.id,
+                conversationId: ctx.conversation.id,
                 role: "assistant",
                 content: finalResult.text,
                 channel: request.channel,
@@ -401,34 +359,15 @@ export class JarvisOrchestrator implements Orchestrator {
                 createdAt: new Date(),
             };
 
-            await this.conversations.appendMessage(assistantMessage);
-
-            const messageCount = await this.conversations.countMessages(conversation.id);
-            const recentMessages = await this.conversations.listRecentMessages(
-                conversation.id,
-                Math.max(8, historyLimit),
-            );
-            const memoryWrites = await this.memory.captureTurn({
-                request,
-                response: assistantMessage,
-                messageCount,
-                recentMessages,
-            });
-
-            await this.runs.complete(runId, {
-                status: "completed",
-                completedAt: new Date(),
-                provider: finalResult.provider,
-                model: finalResult.model,
-            });
+            const { memoryWrites } = await this.finalizeRun(request, ctx, assistantMessage, mctx.toolCalls, finalResult.provider, finalResult.model);
 
             yield {
                 type: "response",
                 response: {
                     messageId: assistantMessage.id,
-                    conversationId: conversation.id,
+                    conversationId: ctx.conversation.id,
                     content: assistantMessage.content,
-                    toolCalls,
+                    toolCalls: mctx.toolCalls,
                     providerUsed: finalResult.provider,
                     modelUsed: finalResult.model,
                     memoryWrites,
@@ -437,21 +376,14 @@ export class JarvisOrchestrator implements Orchestrator {
             };
             yield { type: "done" };
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-
-            await this.runs.complete(runId, {
-                status: "failed",
-                completedAt: new Date(),
-                error: message,
-            });
-
+            const msg = errorMessage(error);
+            await this.runs.complete(ctx.runId, { status: "failed", completedAt: new Date(), error: msg });
             this.logger.error("Streaming request failed", {
                 requestId: request.requestId,
-                conversationId: conversation.id,
-                error: message,
+                conversationId: ctx.conversation.id,
+                error: msg,
             });
-
-            yield { type: "error", error: message };
+            yield { type: "error", error: msg };
         }
     }
 

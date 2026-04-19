@@ -3,6 +3,7 @@ import type { Logger } from "../../observability/logger.js";
 import type { Orchestrator } from "../../orchestrator/index.js";
 import type { ChannelAdapter } from "../types.js";
 import { escapeTelegramHtml, telegramPlainFallback } from "../../utils/channel-formatting.js";
+import { errorMessage } from "../../utils/error.js";
 import { createId } from "../../utils/id.js";
 
 interface TelegramChannelDependencies {
@@ -106,7 +107,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             }
         } catch (error) {
             this.logger.warn("Telegram deleteWebhook failed", {
-                error: error instanceof Error ? error.message : String(error),
+                error: errorMessage(error),
             });
         }
     }
@@ -146,7 +147,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
                         }
 
                         this.logger.error("Telegram update handling failed", {
-                            error: error instanceof Error ? error.message : String(error),
+                            error: errorMessage(error),
                             updateId: update.update_id,
                         });
                     } finally {
@@ -164,7 +165,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
                 }
 
                 this.logger.error("Telegram polling failed", {
-                    error: error instanceof Error ? error.message : String(error),
+                    error: errorMessage(error),
                 });
 
                 const retryAfterSeconds =

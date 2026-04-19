@@ -1,50 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentRegistry } from "../agents/registry/index.js";
-import { JarvisAgent } from "../agents/jarvis/index.js";
-import { createConfig } from "../config/index.js";
-import { InMemoryPersistence } from "../db/in-memory.js";
-import { MemoryService } from "../memory/service.js";
-import { ModelProviderRegistry } from "../models/registry.js";
-import { Logger } from "../observability/logger.js";
-import { JarvisOrchestrator } from "../orchestrator/index.js";
-import { ToolRegistry } from "../tools/registry.js";
-import { ToolRouter } from "../tools/tool-router.js";
+import { createTestStack } from "./helpers.js";
 
 function createOrchestrator(env: Record<string, string> = {}) {
-    const config = createConfig({
-        APP_ENV: "test",
-        ENABLE_HTTP: "false",
-        ENABLE_TERMINAL: "false",
-        ENABLE_TELEGRAM: "false",
-        OPENAI_API_KEY: "test-key",
-        ENABLE_WEB_SEARCH: "false",
-        ...env,
-    });
-    const logger = new Logger("error");
-    const persistence = new InMemoryPersistence();
-    const memory = new MemoryService({
-        config,
-        logger,
-        memories: persistence.memories,
-        conversations: persistence.conversations,
-    });
-    const models = new ModelProviderRegistry({ config, logger });
-    const agents = new AgentRegistry(new JarvisAgent(config));
-    const tools = new ToolRegistry({ config, logger });
-    const toolRouter = new ToolRouter({ config, logger, models });
-
-    return new JarvisOrchestrator({
-        config,
-        logger,
-        conversations: persistence.conversations,
-        runs: persistence.runs,
-        memory,
-        tools,
-        toolRouter,
-        models,
-        agents,
-    });
+    return createTestStack(env).orchestrator;
 }
 
 test("command tools short-circuit the LLM", async () => {

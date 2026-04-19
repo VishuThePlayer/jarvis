@@ -1,7 +1,8 @@
 import type { AppConfig } from "../config/index.js";
-import type { ModelInvocation, ToolCallResult, ToolParameterDefinition, UserRequest } from "../types/core.js";
 import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
+import type { ModelInvocation, ToolCallResult, ToolParameterDefinition, UserRequest } from "../types/core.js";
+import { errorMessage } from "../utils/error.js";
 import type { CommandToolDescriptor } from "./contracts.js";
 import { extractMemoryLookupIntent } from "./memory-lookup.js";
 import { extractTimeIntent } from "./time.js";
@@ -115,7 +116,7 @@ export class ToolRouter {
             return route;
         } catch (error) {
             this.logger.warn("ToolRouter failed; continuing without tool routing", {
-                error: error instanceof Error ? error.message : String(error),
+                error: errorMessage(error),
             });
             return null;
         }

@@ -10,7 +10,7 @@ import type {
 import { channelFormattingSystemPrompt } from "../../utils/channel-formatting.js";
 import { truncate } from "../../utils/text.js";
 
-export interface AgentTurnContext {
+interface AgentTurnContext {
     request: UserRequest;
     conversation: ConversationRecord;
     history: MessageRecord[];

@@ -9,6 +9,7 @@ import type {
     ProviderKind,
     RunRecord,
 } from "../../types/core.js";
+import { errorMessage } from "../../utils/error.js";
 import { createId } from "../../utils/id.js";
 import type { ConversationRepository, MemoryRepository, RunRepository } from "../contracts.js";
 
@@ -123,7 +124,7 @@ async function ensureDatabaseExists(databaseUrl: string, logger: Logger): Promis
         await pool.query(`create database "${databaseName}"`);
         logger.info("Created Postgres database", { database: databaseName });
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
 
         // Ignore duplicate-database errors in case another process created it.
         if (/already exists/i.test(message)) {
@@ -148,11 +149,10 @@ async function migrate(pool: Pool, logger: Logger, config: AppConfig): Promise<v
         try {
             await pool.query('create extension if not exists vector');
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
             throw new Error(
                 'pgvector is enabled (ENABLE_PGVECTOR=true) but Postgres could not create the vector extension. ' +
                     'Install pgvector on your Postgres instance or disable ENABLE_PGVECTOR. Original error: ' +
-                    message,
+                    errorMessage(error),
             );
         }
 
@@ -180,6 +180,56 @@ export class PostgresConversationRepository implements ConversationRepository {
         this.pool = pool;
     }
 
+    private mapConversationRow(row: Record<string, unknown>): ConversationRecord {
+        const typed = row as {
+            id: string;
+            user_id: string;
+            channel: ConversationRecord["channel"];
+            title: string;
+            created_at: string;
+            updated_at: string;
+        };
+        return {
+            id: typed.id,
+            userId: typed.user_id,
+            channel: typed.channel,
+            title: typed.title,
+            createdAt: toDate(typed.created_at),
+            updatedAt: toDate(typed.updated_at),
+        };
+    }
+
+    private mapMessageRow(row: Record<string, unknown>): MessageRecord {
+        const typed = row as {
+            id: string;
+            conversation_id: string;
+            role: MessageRecord["role"];
+            content: string;
+            channel: MessageRecord["channel"];
+            user_id: string;
+            provider: string | null;
+            model: string | null;
+            tool_name: string | null;
+            created_at: string;
+        };
+
+        const message: MessageRecord = {
+            id: typed.id,
+            conversationId: typed.conversation_id,
+            role: typed.role,
+            content: typed.content,
+            channel: typed.channel,
+            userId: typed.user_id,
+            createdAt: toDate(typed.created_at),
+        };
+
+        if (typed.provider) message.provider = typed.provider as ProviderKind;
+        if (typed.model) message.model = typed.model;
+        if (typed.tool_name) message.toolName = typed.tool_name;
+
+        return message;
+    }
+
     public async ensureConversation(input: {
         conversationId?: string;
         userId: string;
@@ -200,23 +250,7 @@ export class PostgresConversationRepository implements ConversationRepository {
             [conversationId, input.userId, input.channel, input.title, now],
         );
 
-        const row = result.rows[0] as {
-            id: string;
-            user_id: string;
-            channel: ConversationRecord["channel"];
-            title: string;
-            created_at: string;
-            updated_at: string;
-        };
-
-        return {
-            id: row.id,
-            userId: row.user_id,
-            channel: row.channel,
-            title: row.title,
-            createdAt: toDate(row.created_at),
-            updatedAt: toDate(row.updated_at),
-        };
+        return this.mapConversationRow(result.rows[0]);
     }
 
     public async getConversation(conversationId: string): Promise<ConversationRecord | null> {
@@ -229,27 +263,8 @@ export class PostgresConversationRepository implements ConversationRepository {
             [conversationId],
         );
 
-        if (result.rowCount === 0) {
-            return null;
-        }
-
-        const row = result.rows[0] as {
-            id: string;
-            user_id: string;
-            channel: ConversationRecord["channel"];
-            title: string;
-            created_at: string;
-            updated_at: string;
-        };
-
-        return {
-            id: row.id,
-            userId: row.user_id,
-            channel: row.channel,
-            title: row.title,
-            createdAt: toDate(row.created_at),
-            updatedAt: toDate(row.updated_at),
-        };
+        if (result.rowCount === 0) return null;
+        return this.mapConversationRow(result.rows[0]);
     }
 
     public async appendMessage(message: MessageRecord): Promise<void> {
@@ -310,46 +325,7 @@ export class PostgresConversationRepository implements ConversationRepository {
             [conversationId, limit],
         );
 
-        const mapped = result.rows.map((row): MessageRecord => {
-            const typed = row as {
-                id: string;
-                conversation_id: string;
-                role: MessageRecord['role'];
-                content: string;
-                channel: MessageRecord['channel'];
-                user_id: string;
-                provider: string | null;
-                model: string | null;
-                tool_name: string | null;
-                created_at: string;
-            };
-
-            const message: MessageRecord = {
-                id: typed.id,
-                conversationId: typed.conversation_id,
-                role: typed.role,
-                content: typed.content,
-                channel: typed.channel,
-                userId: typed.user_id,
-                createdAt: toDate(typed.created_at),
-            };
-
-            if (typed.provider) {
-                message.provider = typed.provider as ProviderKind;
-            }
-
-            if (typed.model) {
-                message.model = typed.model;
-            }
-
-            if (typed.tool_name) {
-                message.toolName = typed.tool_name;
-            }
-
-            return message;
-        });
-
-        return mapped.reverse();
+        return result.rows.map((row) => this.mapMessageRow(row)).reverse();
     }
 
     public async listMessages(conversationId: string): Promise<MessageRecord[]> {
@@ -363,44 +339,7 @@ export class PostgresConversationRepository implements ConversationRepository {
             [conversationId],
         );
 
-        return result.rows.map((row): MessageRecord => {
-            const typed = row as {
-                id: string;
-                conversation_id: string;
-                role: MessageRecord["role"];
-                content: string;
-                channel: MessageRecord["channel"];
-                user_id: string;
-                provider: string | null;
-                model: string | null;
-                tool_name: string | null;
-                created_at: string;
-            };
-
-            const message: MessageRecord = {
-                id: typed.id,
-                conversationId: typed.conversation_id,
-                role: typed.role,
-                content: typed.content,
-                channel: typed.channel,
-                userId: typed.user_id,
-                createdAt: toDate(typed.created_at),
-            };
-
-            if (typed.provider) {
-                message.provider = typed.provider as ProviderKind;
-            }
-
-            if (typed.model) {
-                message.model = typed.model;
-            }
-
-            if (typed.tool_name) {
-                message.toolName = typed.tool_name;
-            }
-
-            return message;
-        });
+        return result.rows.map((row) => this.mapMessageRow(row));
     }
 
     public async saveSummary(summary: ConversationSummary): Promise<void> {

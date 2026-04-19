@@ -3,7 +3,9 @@ import type { ConversationRepository, MemoryRepository } from "../db/contracts.j
 import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
 import type { ConversationSummary, MemoryEntry, MessageRecord, UserRequest } from "../types/core.js";
+import { errorMessage } from "../utils/error.js";
 import { createId } from "../utils/id.js";
+import { memoryKindBoost } from "../utils/memory.js";
 import { keywordOverlapScore, normalizeWhitespace, tokenize, truncate } from "../utils/text.js";
 
 export interface MemoryContext {
@@ -53,7 +55,7 @@ export class MemoryService {
 
         const keywordScores = new Map<string, number>();
         for (const entry of allEntries) {
-            const score = keywordOverlapScore(queryTokens, entry.keywords) + this.kindBoost(entry.kind);
+            const score = keywordOverlapScore(queryTokens, entry.keywords) + memoryKindBoost(entry.kind);
             if (score > 0) {
                 keywordScores.set(entry.id, score);
             }
@@ -97,7 +99,7 @@ export class MemoryService {
                 ranked = hybridScored.map((s) => entryMap.get(s.id)!).filter(Boolean);
             } catch (error) {
                 this.logger.warn("Embedding retrieval failed, falling back to keyword search", {
-                    error: error instanceof Error ? error.message : String(error),
+                    error: errorMessage(error),
                 });
                 ranked = this.keywordRank(allEntries, keywordScores, limit);
             }
@@ -148,7 +150,7 @@ export class MemoryService {
                 embeddings = await this.models.embed(newCandidates.map((c) => c.content));
             } catch (error) {
                 this.logger.warn("Failed to embed memories, saving without embeddings", {
-                    error: error instanceof Error ? error.message : String(error),
+                    error: errorMessage(error),
                 });
             }
         }
@@ -165,19 +167,6 @@ export class MemoryService {
         await this.maybeSummarizeConversation({ messageCount: input.messageCount, recentMessages: input.recentMessages });
 
         return writes;
-    }
-
-    private kindBoost(kind: MemoryEntry["kind"]): number {
-        switch (kind) {
-            case "preference":
-                return 0.4;
-            case "fact":
-                return 0.25;
-            case "episode":
-                return 0.1;
-            case "summary":
-                return 0.05;
-        }
     }
 
     private extractCandidates(

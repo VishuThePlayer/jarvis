@@ -1,10 +1,12 @@
-import type { Logger } from "../observability/logger.js";
 import type { AppConfig } from "../config/index.js";
 import type { MemoryRepository } from "../db/contracts.js";
-import { createId } from "../utils/id.js";
+import type { Logger } from "../observability/logger.js";
 import type { ToolCallRecord, UserRequest } from "../types/core.js";
-import type { CommandToolDescriptor } from "./contracts.js";
+import { errorMessage } from "../utils/error.js";
+import { memoryKindBoost } from "../utils/memory.js";
 import { keywordOverlapScore, tokenize, truncate } from "../utils/text.js";
+import { createToolRecord } from "../utils/tool-record.js";
+import type { CommandToolDescriptor } from "./contracts.js";
 
 interface MemoryLookupToolDependencies {
     config: AppConfig;
@@ -32,11 +34,13 @@ export class MemoryLookupTool {
     private readonly config: AppConfig;
     private readonly logger: Logger;
     private readonly memories: MemoryRepository;
+    private lastUserId: string;
 
     public constructor(dependencies: MemoryLookupToolDependencies) {
         this.config = dependencies.config;
         this.logger = dependencies.logger;
         this.memories = dependencies.memories;
+        this.lastUserId = this.config.app.defaultUserId;
     }
 
     public describe(): CommandToolDescriptor {
@@ -65,29 +69,33 @@ export class MemoryLookupTool {
         if (!this.config.tools.memoryLookup.perChannel[request.channel]) return false;
 
         const message = request.message.trim();
-        return COMMAND_RE.test(message) || extractMemoryLookupIntent(message) != null;
+        const matches = COMMAND_RE.test(message) || extractMemoryLookupIntent(message) != null;
+        if (matches) {
+            this.lastUserId = request.userId;
+        }
+        return matches;
     }
 
     public async execute(message: string): Promise<ToolCallRecord> {
         const query = this.parseQuery(message);
 
         if (!query) {
-            return this.record(message, false, "Please provide a query. Example: //remember my name");
+            return createToolRecord("memory-lookup", message, false, "Please provide a query. Example: //remember my name");
         }
 
         try {
-            const userId = this.config.app.defaultUserId;
+            const userId = this.lastUserId;
             const allEntries = await this.memories.listByUser(userId);
 
             if (allEntries.length === 0) {
-                return this.record(message, true, "I don't have any memories stored yet. Tell me something to remember!");
+                return createToolRecord("memory-lookup", message, true, "I don't have any memories stored yet. Tell me something to remember!");
             }
 
             const queryTokens = tokenize(query);
             const scored = allEntries
                 .map((entry) => ({
                     entry,
-                    score: keywordOverlapScore(queryTokens, entry.keywords) + this.kindBoost(entry.kind),
+                    score: keywordOverlapScore(queryTokens, entry.keywords) + memoryKindBoost(entry.kind),
                 }))
                 .filter((s) => s.score > 0)
                 .sort((a, b) => b.score - a.score)
@@ -98,7 +106,8 @@ export class MemoryLookupTool {
                     .slice(0, this.config.memory.retrievalLimit)
                     .map((e) => `- ${truncate(e.content, 120)} (${e.kind})`)
                     .join("\n");
-                return this.record(
+                return createToolRecord(
+                    "memory-lookup",
                     message,
                     true,
                     `I couldn't find anything matching "${query}". Here's what I do remember:\n${allMemories}`,
@@ -114,16 +123,12 @@ export class MemoryLookupTool {
                 .map(({ entry }) => `- ${truncate(entry.content, 160)} (${entry.kind}, confidence: ${Math.round(entry.confidence * 100)}%)`)
                 .join("\n");
 
-            return this.record(message, true, `Here's what I remember about "${query}":\n${lines}`);
+            return createToolRecord("memory-lookup", message, true, `Here's what I remember about "${query}":\n${lines}`);
         } catch (error) {
-            const text = error instanceof Error ? error.message : String(error);
+            const text = errorMessage(error);
             this.logger.warn("Memory lookup failed", { error: text });
-            return this.record(message, false, `Memory lookup failed: ${text}`);
+            return createToolRecord("memory-lookup", message, false, `Memory lookup failed: ${text}`);
         }
-    }
-
-    private record(input: string, success: boolean, output: string): ToolCallRecord {
-        return { id: createId("tool"), name: "memory-lookup", input, output, success, createdAt: new Date() };
     }
 
     private parseQuery(message: string): string | null {
@@ -142,18 +147,4 @@ export class MemoryLookupTool {
         return null;
     }
 
-    private kindBoost(kind: string): number {
-        switch (kind) {
-            case "preference":
-                return 0.4;
-            case "fact":
-                return 0.25;
-            case "episode":
-                return 0.1;
-            case "summary":
-                return 0.05;
-            default:
-                return 0;
-        }
-    }
 }
