@@ -10,4 +10,7 @@ test("createConfig applies sensible defaults", () => {
     assert.equal(config.channels.http.enabled, true);
     assert.equal(config.memory.enabled, true);
     assert.equal(config.web.appOrigin, undefined);
+    assert.equal(config.orchestrator.historyMessageLimit, 50);
+    assert.equal(config.persistence.pgvector.enabled, false);
+    assert.equal(config.persistence.pgvector.dimensions, 1536);
 });

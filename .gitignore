@@ -9,6 +9,7 @@ dist/
 .env
 .env.*
 !.env.example
+jarvis.config.json
 
 # Logs and debug
 logs/

@@ -15,7 +15,6 @@ export interface ResolvedProviderSelection {
 
 export interface ResolvedModelPlan {
     primary: ResolvedProviderSelection;
-    fallback?: ResolvedProviderSelection;
 }
 
 export interface ProviderHealth {

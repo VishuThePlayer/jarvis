@@ -1,7 +1,7 @@
 export type ChannelKind = "terminal" | "http" | "telegram";
 export type MessageRole = "system" | "user" | "assistant" | "tool";
-export type ProviderKind = "local" | "openai" | "openrouter";
-export type ModelSlot = "default" | "fast" | "reasoning" | "embedding" | "fallback";
+export type ProviderKind = "openai";
+export type ModelSlot = "default" | "fast" | "reasoning" | "embedding";
 export type ModelCapability = "chat" | "embeddings" | "streaming";
 export type RunStatus = "running" | "completed" | "failed";
 export type MemoryKind = "fact" | "preference" | "episode" | "summary";

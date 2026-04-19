@@ -34,6 +34,16 @@ Persistence is selected via `PERSISTENCE_DRIVER`:
 
 When `PERSISTENCE_DRIVER=postgres`, `DATABASE_URL` must be set and the runtime will auto-create the target database (for example `jarvis`) and apply the schema on startup.
 
+### pgvector (optional)
+
+To store embeddings and enable vector search in Postgres:
+
+- Install pgvector on your Postgres instance.
+- Set ENABLE_PGVECTOR=true and PGVECTOR_DIMENSIONS to match your embedding model (default 1536).
+
+On startup, Jarvis will attempt to create the ector extension and add memory_entries.embedding.
+You can also apply db/postgres/pgvector.sql manually.
+
 ## Quick start
 
 1. Copy `.env.example` to `.env`.

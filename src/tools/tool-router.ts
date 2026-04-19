@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config/index.js";
-import type { ModelInvocation, ProviderKind, UserRequest } from "../types/core.js";
+import type { ModelInvocation, UserRequest } from "../types/core.js";
 import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
 import type { CommandToolDescriptor } from "./contracts.js";
@@ -31,7 +31,7 @@ function extractTimeIntent(message: string): { place?: string } | null {
     // what time is it (in X)?
     const inMatch =
         cleaned.match(
-            /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b\s*(?:in|at)\s+(.+)$/i,
+            /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b\s*(?:in|at)\s+(.+)$/i,
         ) ??
         cleaned.match(/\b(?:time)\b\s*(?:in|at)\s+(.+)$/i);
 
@@ -40,8 +40,12 @@ function extractTimeIntent(message: string): { place?: string } | null {
         return place ? { place } : {};
     }
 
+    if (/^\s*time(?:\s+(?:please|pls))?\s*[?.!]?\s*$/i.test(cleaned)) {
+        return {};
+    }
+
     if (
-        /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b/i.test(
+        /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b/i.test(
             cleaned,
         )
     ) {
@@ -143,14 +147,9 @@ export class ToolRouter {
             return null;
         }
 
-        const preferredProvider = this.config.providers.defaultProvider;
-        if (preferredProvider === "local") {
-            return null;
-        }
-
         const providerConfigured = this.models
             .getProviderHealth()
-            .some((health) => health.provider === preferredProvider && health.configured);
+            .some((health) => health.provider === "openai" && health.configured);
 
         if (!providerConfigured) {
             return null;
@@ -185,8 +184,7 @@ export class ToolRouter {
 
         const forcedModelRequest: UserRequest = {
             ...request,
-            // Force the "fast" model for routing to keep this cheap.
-            requestedModel: `${preferredProvider}:${this.config.models.fast}`,
+            requestedModel: `openai:${this.config.models.fast}`,
         };
 
         const invocation: ModelInvocation = {

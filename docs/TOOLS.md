@@ -6,7 +6,7 @@ Jarvis tools are small modules that run **before** the LLM call (pre-model tools
 
 ### 1) Command tools (recommended for `//...` commands)
 
-- Triggered by an explicit user command like `//time` (some tools may also auto-trigger on natural language).
+- Triggered by an explicit user command like `//tool` (some tools may also auto-trigger on natural language).
 - Runs **without calling the LLM** (the orchestrator short-circuits).
 - The assistant reply is the tool output text.
 
@@ -17,7 +17,7 @@ Where it is wired:
 
 ### Tool router (natural language -> `//command`)
 
-If you enable the tool router (`ENABLE_TOOL_ROUTER=true`), Jarvis may route plain-language messages to an appropriate **command tool** (for example, "what time is it?" -> `//time`).
+If you enable the tool router (`ENABLE_TOOL_ROUTER=true`), Jarvis may route plain-language messages to an appropriate **command tool** (for example, "what time is it?" -> `//tool`).
 
 - It only routes to command tools that are enabled for the current channel.
 - For best results, keep each command tool's `describe()` accurate (description + examples).
@@ -41,6 +41,10 @@ Use the built-in scaffolder (cross-platform):
 ```bash
 npm run tool:new -- my-tool
 ```
+
+Wrappers (optional):
+- scripts/new-tool.sh my-tool
+- scripts/new-tool.ps1 my-tool
 
 Or directly:
 

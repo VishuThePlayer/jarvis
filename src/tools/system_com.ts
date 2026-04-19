@@ -32,7 +32,7 @@ function extractTimeIntent(message: string): { place?: string } | null {
     // what time is it (in X)?
     const inMatch =
         cleaned.match(
-            /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b\s*(?:in|at)\s+(.+)$/i,
+            /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b\s*(?:in|at)\s+(.+)$/i,
         ) ?? cleaned.match(/\btime\b\s*(?:in|at)\s+(.+)$/i);
 
     if (inMatch?.[1]) {
@@ -45,7 +45,7 @@ function extractTimeIntent(message: string): { place?: string } | null {
     }
 
     if (
-        /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+the\s+time)\b/i.test(
+        /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b/i.test(
             cleaned,
         )
     ) {

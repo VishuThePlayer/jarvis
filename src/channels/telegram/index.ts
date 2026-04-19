@@ -76,8 +76,27 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         }
 
         this.running = true;
+        await this.clearWebhook();
         this.pollTask = this.pollLoop();
         this.logger.info("Telegram channel started");
+    }
+
+    private async clearWebhook(): Promise<void> {
+        try {
+            const response = await fetch(
+                this.buildApiUrl("deleteWebhook", { drop_pending_updates: "false" }),
+                { method: "POST" },
+            );
+            if (!response.ok) {
+                this.logger.warn("Telegram deleteWebhook returned non-OK", {
+                    status: response.status,
+                });
+            }
+        } catch (error) {
+            this.logger.warn("Telegram deleteWebhook failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
     }
 
     public async stop(): Promise<void> {
@@ -212,6 +231,12 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         );
 
         if (!response.ok) {
+            if (response.status === 409) {
+                this.logger.warn(
+                    "Telegram getUpdates returned 409 Conflict - another instance is polling or a webhook is set. Clearing webhook and backing off.",
+                );
+                await this.clearWebhook();
+            }
             const error = new Error(`Telegram getUpdates failed with ${response.status} ${response.statusText}`);
             const retryAfterSeconds = Number(response.headers.get("Retry-After"));
             if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {

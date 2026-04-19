@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChannelKind, ProviderKind } from "../types/core.js";
+import type { ChannelKind } from "../types/core.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -56,14 +56,9 @@ export interface AppConfig {
         };
     };
     providers: {
-        defaultProvider: ProviderKind;
-        fallbackProvider: ProviderKind;
         openai: {
             apiKey?: string;
             baseUrl: string;
-        };
-        openrouter: {
-            apiKey?: string;
         };
     };
     models: {
@@ -71,7 +66,9 @@ export interface AppConfig {
         fast: string;
         reasoning: string;
         embedding: string;
-        fallback: string;
+    };
+    orchestrator: {
+        historyMessageLimit: number;
     };
     tools: {
         webSearch: {
@@ -99,6 +96,10 @@ export interface AppConfig {
     persistence: {
         driver: "memory" | "postgres";
         databaseUrl?: string;
+        pgvector: {
+            enabled: boolean;
+            dimensions: number;
+        };
     };
 }
 
@@ -115,16 +116,13 @@ const envSchema = z.object({
     TELEGRAM_BOT_TOKEN: z.string().optional(),
     TELEGRAM_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1500),
     TELEGRAM_LONG_POLL_TIMEOUT_SEC: z.coerce.number().int().min(0).max(50).default(30),
-    DEFAULT_PROVIDER: z.enum(["local", "openai", "openrouter"]).default("local"),
-    FALLBACK_PROVIDER: z.enum(["local", "openai", "openrouter"]).default("local"),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
-    OPENROUTER_API_KEY: z.string().optional(),
-    DEFAULT_MODEL: z.string().min(1).default("jarvis-local"),
-    FAST_MODEL: z.string().min(1).default("jarvis-local-fast"),
-    REASONING_MODEL: z.string().min(1).default("jarvis-local-reasoning"),
-    EMBEDDING_MODEL: z.string().min(1).default("jarvis-local-embedding"),
-    FALLBACK_MODEL: z.string().min(1).default("jarvis-local"),
+    DEFAULT_MODEL: z.string().min(1).default("gpt-4o"),
+    FAST_MODEL: z.string().min(1).default("gpt-4o-mini"),
+    REASONING_MODEL: z.string().min(1).default("o1"),
+    EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
+    ORCHESTRATOR_HISTORY_MESSAGE_LIMIT: z.coerce.number().int().positive().max(200).default(50),
     ENABLE_WEB_SEARCH: envBoolean.optional().default(true),
     ALLOW_WEB_SEARCH_BY_DEFAULT: envBoolean.optional().default(true),
     WEB_SEARCH_MAX_RESULTS: z.coerce.number().int().positive().max(10).default(5),
@@ -135,6 +133,8 @@ const envSchema = z.object({
     AUTO_STORE_MEMORY: envBoolean.optional().default(true),
     MEMORY_RETRIEVAL_LIMIT: z.coerce.number().int().positive().max(10).default(5),
     MEMORY_SUMMARY_TRIGGER_MESSAGES: z.coerce.number().int().positive().default(8),
+    ENABLE_PGVECTOR: envBoolean.optional().default(false),
+    PGVECTOR_DIMENSIONS: z.coerce.number().int().positive().max(8192).default(1536),
     PERSISTENCE_DRIVER: z.enum(["memory", "postgres"]).default("memory"),
     DATABASE_URL: z.string().optional(),
 });
@@ -143,7 +143,6 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     const parsed = envSchema.parse(env);
     const telegram = parsed.TELEGRAM_BOT_TOKEN?.trim();
     const openAiKey = parsed.OPENAI_API_KEY?.trim();
-    const openRouterKey = parsed.OPENROUTER_API_KEY?.trim();
     const databaseUrl = parsed.DATABASE_URL?.trim();
     const webAppOrigin = parsed.WEB_APP_ORIGIN?.trim();
 
@@ -177,14 +176,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             },
         },
         providers: {
-            defaultProvider: parsed.DEFAULT_PROVIDER,
-            fallbackProvider: parsed.FALLBACK_PROVIDER,
             openai: {
                 ...(openAiKey ? { apiKey: openAiKey } : {}),
                 baseUrl: parsed.OPENAI_BASE_URL,
-            },
-            openrouter: {
-                ...(openRouterKey ? { apiKey: openRouterKey } : {}),
             },
         },
         models: {
@@ -192,8 +186,8 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             fast: parsed.FAST_MODEL,
             reasoning: parsed.REASONING_MODEL,
             embedding: parsed.EMBEDDING_MODEL,
-            fallback: parsed.FALLBACK_MODEL,
         },
+        orchestrator: { historyMessageLimit: parsed.ORCHESTRATOR_HISTORY_MESSAGE_LIMIT },
         tools: {
             webSearch: {
                 enabled: parsed.ENABLE_WEB_SEARCH,
@@ -232,6 +226,10 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
         persistence: {
             driver: parsed.PERSISTENCE_DRIVER,
             ...(databaseUrl ? { databaseUrl } : {}),
+            pgvector: {
+                enabled: parsed.ENABLE_PGVECTOR,
+                dimensions: parsed.PGVECTOR_DIMENSIONS,
+            },
         },
     };
 }

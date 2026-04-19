@@ -136,9 +136,33 @@ async function ensureDatabaseExists(databaseUrl: string, logger: Logger): Promis
     }
 }
 
-async function migrate(pool: Pool, logger: Logger): Promise<void> {
+async function migrate(pool: Pool, logger: Logger, config: AppConfig): Promise<void> {
     await pool.query(SCHEMA_SQL);
-    logger.info("Postgres schema is ready");
+
+    if (config.persistence.pgvector.enabled) {
+        const dimensions = config.persistence.pgvector.dimensions;
+        if (!Number.isInteger(dimensions) || dimensions <= 0 || dimensions > 8192) {
+            throw new Error('PGVECTOR_DIMENSIONS must be an integer between 1 and 8192 (received ' + String(dimensions) + ').');
+        }
+
+        try {
+            await pool.query('create extension if not exists vector');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(
+                'pgvector is enabled (ENABLE_PGVECTOR=true) but Postgres could not create the vector extension. ' +
+                    'Install pgvector on your Postgres instance or disable ENABLE_PGVECTOR. Original error: ' +
+                    message,
+            );
+        }
+
+        await pool.query(
+            'alter table memory_entries add column if not exists embedding vector(' + String(dimensions) + ')',
+        );
+        logger.info('pgvector is enabled', { dimensions });
+    }
+
+    logger.info('Postgres schema is ready');
 }
 
 function toDate(value: unknown): Date {
@@ -623,7 +647,7 @@ export async function createPostgresPersistence(input: CreatePostgresPersistence
     await ensureDatabaseExists(databaseUrl, input.logger);
 
     const pool = new Pool({ connectionString: databaseUrl });
-    await migrate(pool, input.logger);
+    await migrate(pool, input.logger, input.config);
 
     return new PostgresPersistence(pool);
 }

@@ -143,7 +143,7 @@ export class JarvisOrchestrator implements Orchestrator {
                     content: commandToolCall.output,
                     channel: request.channel,
                     userId: request.userId,
-                    provider: "local",
+                    provider: "openai",
                     model: "jarvis-command",
                     createdAt: new Date(),
                 };
@@ -153,7 +153,7 @@ export class JarvisOrchestrator implements Orchestrator {
                 await this.runs.complete(runId, {
                     status: "completed",
                     completedAt: new Date(),
-                    provider: "local",
+                    provider: "openai",
                     model: "jarvis-command",
                 });
 
@@ -162,7 +162,7 @@ export class JarvisOrchestrator implements Orchestrator {
                     conversationId: conversation.id,
                     content: assistantMessage.content,
                     toolCalls,
-                    providerUsed: "local",
+                    providerUsed: "openai",
                     modelUsed: "jarvis-command",
                     memoryWrites: [],
                 };
@@ -177,7 +177,8 @@ export class JarvisOrchestrator implements Orchestrator {
             const toolCalls = await this.tools.runPreModelTools(request);
             await this.persistToolMessages(conversation, request, toolCalls);
 
-            const history = await this.conversations.listMessages(conversation.id);
+            const historyLimit = this.config.orchestrator.historyMessageLimit;
+            const history = await this.conversations.listRecentMessages(conversation.id, historyLimit);
             const invocation = await this.agents.getPrimary().prepareInvocation({
                 request,
                 conversation,
@@ -186,7 +187,7 @@ export class JarvisOrchestrator implements Orchestrator {
                 toolCalls,
             });
 
-            const result = await this.models.generateWithFallback(invocation, resolvedModels);
+            const result = await this.models.generate(invocation, resolvedModels);
 
             const assistantMessage: MessageRecord = {
                 id: createId("msg"),
@@ -202,12 +203,16 @@ export class JarvisOrchestrator implements Orchestrator {
 
             await this.conversations.appendMessage(assistantMessage);
 
-            const messages = await this.conversations.listMessages(conversation.id);
+            const messageCount = await this.conversations.countMessages(conversation.id);
+            const recentMessages = await this.conversations.listRecentMessages(
+                conversation.id,
+                Math.max(8, historyLimit),
+            );
             const memoryWrites = await this.memory.captureTurn({
                 request,
                 response: assistantMessage,
-                messageCount: messages.length,
-                recentMessages: messages,
+                messageCount,
+                recentMessages,
             });
 
             await this.runs.complete(runId, {

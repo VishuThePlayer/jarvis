@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tasklist //FI \"IMAGENAME eq node.exe\" //FO TABLE)",
+      "Bash(powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Select-Object Id,StartTime,Path | Format-Table -AutoSize\")",
+      "WebSearch",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(npx tsc *)",
+      "Bash(curl *)",
+      "Bash(npm test *)"
+    ]
+  }
+}

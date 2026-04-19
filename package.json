@@ -11,6 +11,7 @@
     "dev": "tsc-watch --onSuccess \"node dist/index.js\"",
     "dev:web": "npm --prefix web run dev",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:web\"",
+    "setup": "npm run build && node dist/index.js --setup",
     "tool:new": "node scripts/scaffold-tool.mjs"
   },
   "keywords": [],

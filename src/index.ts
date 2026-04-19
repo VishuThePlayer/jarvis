@@ -1,6 +1,10 @@
 import "dotenv/config";
-import { createApplication } from "./app/create-application.js";
+import { runSetupIfNeeded, applyConfigFileToEnv } from "./setup/index.js";
 
+await runSetupIfNeeded();
+applyConfigFileToEnv();
+
+const { createApplication } = await import("./app/create-application.js");
 const application = await createApplication();
 
 const shutdown = async (signal: string) => {

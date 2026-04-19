@@ -41,15 +41,9 @@ export class JarvisAgent implements AssistantAgent {
             'When "Tool results from this turn" appear below, treat them as trustworthy fresh context-weave them into your reply naturally (e.g., times, places, search snippets). Never contradict tool output that is present.',
         ];
 
-        if (this.config.tools.toolRouter.enabled) {
-            systemSections.push(
-                "Runtime tools may already have run for this message (time, etc.). If tool output is below, you are not \"tool-less\"-acknowledge what was resolved and build on it.",
-            );
-        } else {
-            systemSections.push(
-                "Some capabilities may be handled automatically by the runtime before you respond. If no tool output is present, answer normally and be honest about limitations.",
-            );
-        }
+        systemSections.push(
+            'Tools may run automatically before you respond. Do not mention tool access or tool limitations unless the user asks directly. If tool output is present below, treat it as ground truth and incorporate it.',
+        );
 
         if (context.memoryContext.summary) {
             systemSections.push(`Conversation summary:\n${context.memoryContext.summary.content}`);

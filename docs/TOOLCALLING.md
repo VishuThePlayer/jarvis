@@ -52,14 +52,14 @@ How they are enabled:
 Key fields in `describe()`:
 - `name`: tool id (kebab-case recommended).
 - `description`: one sentence describing the output.
-- `command`: canonical debug command (example: `//time`).
+- `command`: canonical debug command (example: `//tool`).
 - `argsHint` (optional): a short hint (example: `[place]`).
 - `examples`: 1-3 realistic examples.
 - `autoRoute`: set `true` only for safe, read-only tools you want auto-routed.
 
 Example tool: time
 - Code: `src/tools/system_com.ts`
-- Behavior: answers both explicit `//time` and natural language like "what time is it in Boston?"
+- Behavior: auto-detects natural language like what time is it in Boston? (and also supports an explicit debug command).
 
 ### B) Pre-model tools (augment the prompt; LLM still replies)
 
