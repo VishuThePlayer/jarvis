@@ -97,6 +97,16 @@ export class SystemComTool {
             argsHint: "[place]",
             examples: ["//time", "//time Boston, MA"],
             autoRoute: true,
+            parameters: {
+                type: "object",
+                properties: {
+                    place: {
+                        type: "string",
+                        description: "City or location to get the time for. Omit for local/UTC time.",
+                    },
+                },
+                required: [],
+            },
         };
     }
 

@@ -7,6 +7,7 @@ export interface CommandToolDescriptor {
     argsHint?: string;
     examples: string[];
     autoRoute: boolean;
+    parameters?: Record<string, unknown>;
 }
 
 export interface CommandTool {

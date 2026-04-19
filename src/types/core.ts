@@ -116,6 +116,24 @@ export interface MemoryEntry {
     sourceMessageId?: string;
 }
 
+export interface ToolParameterDefinition {
+    type: "function";
+    function: {
+        name: string;
+        description: string;
+        parameters?: Record<string, unknown>;
+    };
+}
+
+export interface ToolCallResult {
+    id: string;
+    type: "function";
+    function: {
+        name: string;
+        arguments: string;
+    };
+}
+
 export interface ModelMessage {
     role: "system" | "user" | "assistant";
     content: string;
@@ -125,6 +143,8 @@ export interface ModelInvocation {
     messages: ModelMessage[];
     model: string;
     temperature: number;
+    tools?: ToolParameterDefinition[];
+    tool_choice?: "auto" | "required" | "none" | { type: "function"; function: { name: string } };
 }
 
 export interface ModelResult {
@@ -132,6 +152,7 @@ export interface ModelResult {
     model: string;
     text: string;
     usage?: TokenUsage;
+    toolCalls?: ToolCallResult[];
 }
 
 export interface ModelDescriptor {

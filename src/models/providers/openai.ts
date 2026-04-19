@@ -1,11 +1,19 @@
 import type { AppConfig } from "../../config/index.js";
-import type { ModelCapability, ModelInvocation, ModelResult } from "../../types/core.js";
+import type { ModelCapability, ModelInvocation, ModelResult, ToolCallResult } from "../../types/core.js";
 import type { ModelProvider } from "../contracts.js";
 import { tokenize } from "../../utils/text.js";
 
 interface OpenAIChatChoice {
     message?: {
         content?: string | Array<{ type?: string; text?: string }>;
+        tool_calls?: Array<{
+            id: string;
+            type: "function";
+            function: {
+                name: string;
+                arguments: string;
+            };
+        }>;
     };
 }
 
@@ -55,17 +63,27 @@ export class OpenAIModelProvider implements ModelProvider {
         }
 
         const baseUrl = this.config.providers.openai.baseUrl.replace(/\/$/, "");
+        const body: Record<string, unknown> = {
+            model: invocation.model,
+            messages: invocation.messages,
+            temperature: invocation.temperature,
+        };
+
+        if (invocation.tools && invocation.tools.length > 0) {
+            body.tools = invocation.tools;
+        }
+
+        if (invocation.tool_choice !== undefined) {
+            body.tool_choice = invocation.tool_choice;
+        }
+
         const response = await fetch(`${baseUrl}/chat/completions`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${apiKey}`,
             },
-            body: JSON.stringify({
-                model: invocation.model,
-                messages: invocation.messages,
-                temperature: invocation.temperature,
-            }),
+            body: JSON.stringify(body),
         });
 
 
@@ -76,10 +94,21 @@ export class OpenAIModelProvider implements ModelProvider {
         const data = (await response.json()) as OpenAIChatResponse;
         const text = resolveContent(data.choices?.[0]?.message?.content).trim();
 
+        const rawToolCalls = data.choices?.[0]?.message?.tool_calls;
+        const toolCalls: ToolCallResult[] | undefined = rawToolCalls?.map((tc) => ({
+            id: tc.id,
+            type: tc.type,
+            function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments,
+            },
+        }));
+
         return {
             provider: this.kind,
             model: invocation.model,
             text,
+            ...(toolCalls ? { toolCalls } : {}),
             usage: {
                 inputTokens:
                     data.usage?.prompt_tokens ?? tokenize(invocation.messages.map((message) => message.content).join(" ")).length,

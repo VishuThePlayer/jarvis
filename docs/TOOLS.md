@@ -17,10 +17,13 @@ Where it is wired:
 
 ### Tool router (natural language -> `//command`)
 
-If you enable the tool router (`ENABLE_TOOL_ROUTER=true`), Jarvis may route plain-language messages to an appropriate **command tool** (for example, "what time is it?" -> `//tool`).
+If you enable the tool router (`ENABLE_TOOL_ROUTER=true`), Jarvis may route plain-language messages to an appropriate **command tool** (for example, "what time is it?" -> `//time`).
 
+- Uses **native OpenAI tool calling** (`tools` + `tool_choice: "auto"`) for accurate routing.
+- Each tool's `parameters` JSON Schema is sent as a function tool definition to the model.
+- The model returns structured `tool_calls` (not free-text JSON), which are converted to `//command args`.
 - It only routes to command tools that are enabled for the current channel.
-- For best results, keep each command tool's `describe()` accurate (description + examples).
+- For best results, keep each command tool's `describe()` accurate (description + examples + parameters).
 - Only tools with `autoRoute: true` in `describe()` are eligible for auto-routing.
 - Jarvis avoids an extra model call unless there is a real choice (2+ auto-routable tools).
 
@@ -75,6 +78,35 @@ npm run tool:new -- my-tool --kind pre-model
    - Add an env var (example: `ENABLE_YOUR_TOOL`)
    - Add `tools.yourTool.enabled` + `tools.yourTool.perChannel`
 4) Add the env var to `.env.example` so it is discoverable.
+
+## Adding a `parameters` schema (for native tool calling)
+
+When a command tool has `autoRoute: true`, the ToolRouter sends its definition to the OpenAI API. Adding a `parameters` JSON Schema to `describe()` gives the model structured argument definitions:
+
+```typescript
+public describe(): CommandToolDescriptor {
+    return {
+        name: "weather",
+        description: "Get current weather for a location.",
+        command: "//weather",
+        argsHint: "<city>",
+        examples: ["//weather London"],
+        autoRoute: true,
+        parameters: {                           // <-- JSON Schema
+            type: "object",
+            properties: {
+                city: {
+                    type: "string",
+                    description: "City name to get weather for.",
+                },
+            },
+            required: ["city"],
+        },
+    };
+}
+```
+
+If `parameters` is omitted, the router sends `{ type: "object", properties: {} }` (no-args tool). See `docs/TOOLCALLING.md` for the full native tool calling flow.
 
 ## Recommended conventions
 

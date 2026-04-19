@@ -236,6 +236,16 @@ export class MyTool {
             argsHint: "[args]",
             examples: ["//my-tool", "//my-tool some-argument"],
             autoRoute: false,
+            parameters: {
+                type: "object",
+                properties: {
+                    query: {
+                        type: "string",
+                        description: "The argument to pass to the tool.",
+                    },
+                },
+                required: [],
+            },
         };
     }
 
@@ -380,6 +390,16 @@ export class WeatherTool {
             argsHint: "<city>",
             examples: ["//weather London", "//weather Tokyo, Japan"],
             autoRoute: true,
+            parameters: {
+                type: "object",
+                properties: {
+                    city: {
+                        type: "string",
+                        description: "City name to get weather for.",
+                    },
+                },
+                required: ["city"],
+            },
         };
     }
 
@@ -512,6 +532,7 @@ All tools live in `src/tools/`. Current tools:
 - Toggle `autoRoute` (enables/disables natural language routing)
 - Change `command` (the `//command` prefix)
 - Change `argsHint` (shown in help text)
+- Update `parameters` JSON Schema (defines structured arguments for native tool calling)
 
 **Change config options** → Edit `src/config/index.ts`:
 - Add new env vars to the tool's config section
@@ -606,42 +627,60 @@ const limit = this.config.tools.myTool.maxResults;
 
 ## Tool Router
 
-The tool router (`src/tools/tool-router.ts`) converts natural language into `//command` invocations so the user doesn't need to know command syntax.
+The tool router (`src/tools/tool-router.ts`) converts natural language into `//command` invocations so the user doesn't need to know command syntax. It uses **native OpenAI tool calling** for accurate, structured routing.
 
 ### How it works
 
-1. **Fast-path (regex):** For known patterns (e.g., time queries), the router uses regex directly — no LLM call
-2. **LLM-assisted:** When 2+ tools have `autoRoute: true`, the router makes a cheap LLM call using the `fast` model slot to pick the right tool
+1. **Fast-path (regex):** For known patterns (e.g., time queries), the router uses regex directly -- no LLM call
+2. **Native tool calling:** When 2+ tools have `autoRoute: true`, the router:
+   - Converts each tool's `CommandToolDescriptor` (including `parameters` JSON Schema) into an OpenAI function tool definition
+   - Sends the definitions to the fast model with `tools` and `tool_choice: "auto"`
+   - The model returns structured `tool_calls` (not free-text JSON)
+   - The router extracts the function name and arguments to build a `//command args` string
 
 ### Enabling auto-routing for your tool
 
-In your tool's `describe()`, set `autoRoute: true`:
+In your tool's `describe()`, set `autoRoute: true` and add a `parameters` JSON Schema:
 
 ```typescript
 public describe(): CommandToolDescriptor {
     return {
         name: "weather",
-        autoRoute: true,  // enables NL routing
-        // ...
+        description: "Get current weather for a location.",
+        command: "//weather",
+        argsHint: "<city>",
+        examples: ["//weather London"],
+        autoRoute: true,
+        parameters: {
+            type: "object",
+            properties: {
+                city: {
+                    type: "string",
+                    description: "City name to get weather for.",
+                },
+            },
+            required: ["city"],
+        },
     };
 }
 ```
 
 **Only set `autoRoute: true` for safe, read-only tools.** The router has safety checks:
-- Validates tool name against an allowlist
-- Validates the command starts with the tool's prefix
-- Commands must start with `//` and be under 240 chars
-- Gracefully degrades on failure (returns `null`, no routing)
+- Validates tool name against an allowlist of auto-routable tools
+- Validates the command starts with the tool's registered prefix
+- Commands are capped at 240 chars
+- Malformed arguments default to no-args invocation
+- Gracefully degrades on any error (returns `null`, no routing)
 
 ### Adding a fast-path to the router
 
 For ultra-reliable routing without an LLM call, add a regex fast-path in `tool-router.ts`:
 
 ```typescript
-// In routeCommandTool(), before the LLM-assisted routing:
+// In routeCommandTool(), before the native tool calling path:
 const weatherIntent = this.extractWeatherIntent(request.message);
 if (weatherIntent) {
-    return { toolName: "weather", command: `//weather ${weatherIntent.city}` };
+    return { tool: "weather", command: `//weather ${weatherIntent.city}` };
 }
 ```
 

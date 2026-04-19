@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config/index.js";
-import type { ModelInvocation, UserRequest } from "../types/core.js";
+import type { ModelInvocation, ToolCallResult, ToolParameterDefinition, UserRequest } from "../types/core.js";
 import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
 import type { CommandToolDescriptor } from "./contracts.js";
@@ -55,58 +55,6 @@ function extractTimeIntent(message: string): { place?: string } | null {
     return null;
 }
 
-function extractJsonObject(text: string): unknown | null {
-    const trimmed = text.trim();
-
-    try {
-        return JSON.parse(trimmed);
-    } catch {
-        // ignore
-    }
-
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start < 0 || end <= start) {
-        return null;
-    }
-
-    try {
-        return JSON.parse(trimmed.slice(start, end + 1));
-    } catch {
-        return null;
-    }
-}
-
-function parseRoute(text: string): ToolRoute | null {
-    const parsed = extractJsonObject(text);
-    if (!parsed || typeof parsed !== "object") {
-        return null;
-    }
-
-    const record = parsed as Record<string, unknown>;
-    const tool = record.tool;
-    const command = record.command;
-
-    if (tool == null) {
-        return null;
-    }
-
-    if (typeof tool !== "string" || typeof command !== "string") {
-        return null;
-    }
-
-    const cleanCommand = command.trim();
-    if (!cleanCommand.startsWith("//")) {
-        return null;
-    }
-
-    if (cleanCommand.length > 240) {
-        return null;
-    }
-
-    return { tool: tool.trim(), command: cleanCommand };
-}
-
 export class ToolRouter {
     private readonly config: AppConfig;
     private readonly logger: Logger;
@@ -155,33 +103,6 @@ export class ToolRouter {
             return null;
         }
 
-        const toolsText = routableTools
-            .map((tool) => {
-                const examples = tool.examples.length > 0 ? `\nexamples:\n${tool.examples.map((ex) => `- ${ex}`).join("\n")}` : "";
-                return `tool: ${tool.name}\ncommand: ${tool.command}\ndescription: ${tool.description}${examples}`;
-            })
-            .join("\n\n");
-
-        const system = [
-            "You are ToolRouter for Jarvis.",
-            "Pick at most ONE command tool to run for the user message.",
-            "Return JSON only (no markdown):",
-            '{"tool": "<tool-name>", "command": "//<command> [args]"}',
-            "If no tool is appropriate, return:",
-            '{"tool": null, "command": ""}',
-            "Only choose a tool from the provided list.",
-            'Always use a command that starts with "//".',
-        ].join("\n");
-
-        const user = [
-            `channel: ${request.channel}`,
-            "",
-            "available tools:",
-            toolsText,
-            "",
-            `user message: ${request.message}`,
-        ].join("\n");
-
         const forcedModelRequest: UserRequest = {
             ...request,
             requestedModel: `openai:${this.config.models.fast}`,
@@ -189,18 +110,27 @@ export class ToolRouter {
 
         const invocation: ModelInvocation = {
             messages: [
-                { role: "system", content: system },
-                { role: "user", content: user },
+                {
+                    role: "system",
+                    content: "You are ToolRouter for Jarvis.\nPick at most ONE tool to run for the user message.\nIf no tool is appropriate, do not call any tool.",
+                },
+                { role: "user", content: request.message },
             ],
             model: this.config.models.fast,
             temperature: 0,
+            tools: this.buildToolDefinitions(routableTools),
+            tool_choice: "auto",
         };
 
         try {
             const plan = this.models.resolveForRequest(forcedModelRequest);
             const result = await this.models.generate(invocation, plan);
-            const route = parseRoute(result.text);
 
+            if (!result.toolCalls || result.toolCalls.length === 0) {
+                return null;
+            }
+
+            const route = this.buildCommandFromToolCall(result.toolCalls[0]!, routableTools);
             if (!route) {
                 return null;
             }
@@ -211,11 +141,7 @@ export class ToolRouter {
             }
 
             const selected = routableTools.find((tool) => tool.name === route.tool);
-            if (!selected) {
-                return null;
-            }
-
-            if (!route.command.toLowerCase().startsWith(selected.command.toLowerCase())) {
+            if (!selected || !route.command.toLowerCase().startsWith(selected.command.toLowerCase())) {
                 return null;
             }
 
@@ -226,5 +152,44 @@ export class ToolRouter {
             });
             return null;
         }
+    }
+
+    private buildToolDefinitions(tools: CommandToolDescriptor[]): ToolParameterDefinition[] {
+        return tools.map((tool) => ({
+            type: "function" as const,
+            function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters ?? { type: "object", properties: {} },
+            },
+        }));
+    }
+
+    private buildCommandFromToolCall(toolCall: ToolCallResult, tools: CommandToolDescriptor[]): ToolRoute | null {
+        const descriptor = tools.find((t) => t.name === toolCall.function.name);
+        if (!descriptor) {
+            return null;
+        }
+
+        let args = "";
+        try {
+            const parsed = JSON.parse(toolCall.function.arguments);
+            if (typeof parsed === "object" && parsed !== null) {
+                const values = Object.values(parsed).filter(
+                    (v): v is string => typeof v === "string" && v.trim().length > 0,
+                );
+                args = values.join(" ");
+            }
+        } catch {
+            // empty or malformed arguments — treat as no-args invocation
+        }
+
+        const command = args ? `${descriptor.command} ${args}`.trim() : descriptor.command;
+
+        if (command.length > 240) {
+            return null;
+        }
+
+        return { tool: descriptor.name, command };
     }
 }

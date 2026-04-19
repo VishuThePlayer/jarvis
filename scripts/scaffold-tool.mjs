@@ -6,10 +6,10 @@ function exitWithUsage() {
   console.error(
     [
       "Usage:",
-      "  node scripts/scaffold-tool.mjs <tool-id> [--kind command|pre-model] [--command <cmd>]",
+      "  node scripts/scaffold-tool.mjs <tool-id> [--kind command|pre-model] [--command <cmd>] [--auto-route]",
       "",
       "Examples:",
-      "  node scripts/scaffold-tool.mjs weather --kind command --command weather",
+      "  node scripts/scaffold-tool.mjs weather --kind command --command weather --auto-route",
       "  node scripts/scaffold-tool.mjs redact --kind pre-model",
     ].join("\n"),
   );
@@ -80,6 +80,7 @@ if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/i.test(toolId)) {
 
 let kind = "command";
 let commandName = toolId;
+let autoRoute = false;
 
 for (let i = 1; i < args.length; i++) {
   const arg = args[i];
@@ -91,6 +92,10 @@ for (let i = 1; i < args.length; i++) {
   if (arg === "--command") {
     commandName = args[i + 1] ?? "";
     i++;
+    continue;
+  }
+  if (arg === "--auto-route") {
+    autoRoute = true;
     continue;
   }
   if (arg === "--help" || arg === "-h") {
@@ -118,6 +123,25 @@ if (fs.existsSync(toolPath)) {
   console.error(`Error: Tool file already exists: ${toolPath}`);
   process.exit(1);
 }
+
+const autoRouteValue = autoRoute ? "true" : "false";
+const parametersBlock = autoRoute
+  ? `
+            parameters: {
+                type: "object",
+                properties: {
+                    query: {
+                        type: "string",
+                        description: "TODO: describe this parameter.",
+                    },
+                },
+                required: [],
+            },`
+  : `
+            parameters: {
+                type: "object",
+                properties: {},
+            },`;
 
 const toolTemplate = `import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
@@ -149,7 +173,7 @@ export class ${className} {
             command: "//${commandName}",
             argsHint: "[args]",
             examples: ["//${commandName}"],
-            autoRoute: false,
+            autoRoute: ${autoRouteValue},${parametersBlock}
         };
     }
 
@@ -288,7 +312,9 @@ console.log(`Scaffolded tool '${toolId}'.`);
 console.log(`- Tool file: src/tools/${toolId}.ts`);
 console.log(`- Env flag: ${envKey}`);
 console.log(`- Config key: tools.${configKey}`);
+console.log(`- Auto-route: ${autoRoute}`);
 console.log("");
 console.log("Next:");
 console.log("1) Implement the tool logic in the generated file.");
-console.log("2) Run: npm test");
+console.log("2) Update the parameters JSON Schema in describe() to match your tool's arguments.");
+console.log("3) Run: npm test");
