@@ -32,7 +32,7 @@ A complete reference for adding tools, editing features, and working with the Ja
 
 ## Project Overview
 
-Jarvis is a local-first, provider-agnostic AI assistant runtime built with Node.js and TypeScript. It receives user messages from multiple channels (HTTP, terminal, Telegram), optionally runs tools, calls an LLM, persists conversations and memory, and returns responses.
+Jarvis is an AI assistant runtime built with Node.js and TypeScript. It receives user messages from multiple channels (HTTP, terminal, Telegram), optionally runs tools, calls an LLM via the OpenAI-compatible provider, persists conversations and memory, and returns responses.
 
 **Key technologies:**
 - **Runtime:** Node.js with ESM modules
@@ -62,11 +62,9 @@ src/
 │   └── registry/index.ts             # Agent registry
 ├── models/
 │   ├── contracts.ts                  # ModelProvider interface
-│   ├── registry.ts                   # Provider selection + fallback
+│   ├── registry.ts                   # Provider selection
 │   └── providers/
-│       ├── local.ts                  # Offline stub provider
-│       ├── openai.ts                 # OpenAI-compatible API
-│       └── openrouter.ts            # OpenRouter SDK
+│       └── openai.ts                 # OpenAI-compatible API
 ├── tools/
 │   ├── contracts.ts                  # CommandTool + CommandToolDescriptor
 │   ├── registry.ts                   # Tool registry (command + pre-model)
@@ -161,7 +159,7 @@ When a user sends a message, here is exactly what happens:
    7. **Memory retrieval** — fetches relevant memories + conversation summary
    8. **Pre-model tools** — runs web search etc., persists tool messages
    9. **Agent invocation** — builds system prompt + message history
-   10. **LLM call** — `generateWithFallback()` with primary + fallback provider
+   10. **LLM call** — `generate()` with the OpenAI provider
    11. Persists assistant message
    12. **Memory capture** — extracts facts/preferences from user message
    13. Completes the run record
@@ -576,7 +574,7 @@ const limit = this.config.tools.myTool.maxResults;
 
 - Triggered by `//command` prefix or natural language patterns in `shouldRun()`
 - The orchestrator short-circuits — returns tool output directly
-- Cheap, fast, works even with `local` provider
+- Cheap, fast, no LLM call needed
 - Good for: time, weather, health checks, simple lookups, calculators
 
 **Pipeline position:** `orchestrator.handleRequest()` → `tools.tryRunCommand()` → returns immediately if matched
@@ -739,7 +737,7 @@ export class MyProvider implements ModelProvider {
 2. **Add to `ProviderKind`** in `src/types/core.ts`:
 
 ```typescript
-export type ProviderKind = "local" | "openai" | "openrouter" | "my-provider";
+export type ProviderKind = "openai" | "my-provider";
 ```
 
 3. **Register** in `ModelProviderRegistry` constructor (`src/models/registry.ts`).

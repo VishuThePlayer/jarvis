@@ -5,9 +5,7 @@ export function HealthIndicator() {
   const isConnected = useChatStore((s) => s.isConnected);
   const health = useChatStore((s) => s.health);
 
-  const hasConfiguredProvider = health?.providers.some(
-    (p) => p.configured && p.provider !== "local",
-  );
+  const hasConfiguredProvider = health?.providers.some((p) => p.configured);
 
   const status: "connected" | "degraded" | "disconnected" = !isConnected
     ? "disconnected"
@@ -29,7 +27,7 @@ export function HealthIndicator() {
 
   const labels = {
     connected: "Connected",
-    degraded: "Local only",
+    degraded: "No API key",
     disconnected: "Disconnected",
   };
 

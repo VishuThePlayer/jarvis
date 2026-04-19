@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis is now structured as a local-first, provider-agnostic assistant runtime with clear boundaries between channels, orchestration, tools, providers, and memory.
+Jarvis is a local-first assistant runtime with clear boundaries between channels, orchestration, tools, providers, and memory.
 
 ## Frontend
 
@@ -15,7 +15,7 @@ Jarvis now also includes a dedicated React frontend in `web/`.
 
 - `src/orchestrator/index.ts` is the central request hub.
 - `src/channels/terminal/index.ts`, `src/server/http-server.ts`, and `src/channels/telegram/index.ts` are channel adapters.
-- `src/models/registry.ts` selects providers/models and supports local, OpenAI, and OpenRouter adapters.
+- `src/models/registry.ts` selects models via the OpenAI-compatible provider.
 - `src/tools/web-search.ts` adds configurable web search.
 - `src/memory/service.ts` handles retrieval, summarization, and durable preference/fact extraction.
 - `src/db/in-memory.ts` and `src/db/postgres/persistence.ts` provide persistence adapters (memory or Postgres).
@@ -41,18 +41,17 @@ To store embeddings and enable vector search in Postgres:
 - Install pgvector on your Postgres instance.
 - Set ENABLE_PGVECTOR=true and PGVECTOR_DIMENSIONS to match your embedding model (default 1536).
 
-On startup, Jarvis will attempt to create the ector extension and add memory_entries.embedding.
+On startup, Jarvis will attempt to create the ector extension and add memory_entries.embedding.
 You can also apply db/postgres/pgvector.sql manually.
 
 ## Quick start
 
 1. Copy `.env.example` to `.env`.
-2. Set `DEFAULT_PROVIDER` to `local`, `openai`, or `openrouter`.
-3. Add the matching API key if you use `openai` (`OPENAI_API_KEY`) or `openrouter` (`OPENROUTER_API_KEY`).
-4. (Optional) Set `PERSISTENCE_DRIVER=memory` if you do not want Postgres.
-5. Set `WEB_APP_ORIGIN=http://localhost:5173` if you will run the dedicated web app locally.
-6. Run `npm run build`.
-7. Run `npm start`.
+2. Set `OPENAI_API_KEY` (supports OpenAI-compatible APIs via `OPENAI_BASE_URL`).
+3. (Optional) Set `PERSISTENCE_DRIVER=memory` if you do not want Postgres.
+4. Set `WEB_APP_ORIGIN=http://localhost:5173` if you will run the dedicated web app locally.
+5. Run `npm run build`.
+6. Run `npm start`.
 
 ## Frontend quick start
 

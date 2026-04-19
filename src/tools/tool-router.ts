@@ -198,7 +198,7 @@ export class ToolRouter {
 
         try {
             const plan = this.models.resolveForRequest(forcedModelRequest);
-            const result = await this.models.generateWithFallback(invocation, plan);
+            const result = await this.models.generate(invocation, plan);
             const route = parseRoute(result.text);
 
             if (!route) {
@@ -223,7 +223,6 @@ export class ToolRouter {
         } catch (error) {
             this.logger.warn("ToolRouter failed; continuing without tool routing", {
                 error: error instanceof Error ? error.message : String(error),
-                provider: preferredProvider satisfies ProviderKind,
             });
             return null;
         }

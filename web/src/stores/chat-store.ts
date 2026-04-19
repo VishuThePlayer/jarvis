@@ -91,10 +91,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const state = get();
       if (!state.selectedModel && models.length > 0) {
         const defaultModel = models.find(
-          (m) => m.isConfigured && m.provider !== "local" && m.roles.includes("default"),
+          (m) => m.isConfigured && m.roles.includes("default"),
         );
         const anyConfigured = models.find(
-          (m) => m.isConfigured && m.provider !== "local",
+          (m) => m.isConfigured,
         );
         const pick = defaultModel ?? anyConfigured;
         set({ selectedModel: pick ? `${pick.provider}:${pick.id}` : null });

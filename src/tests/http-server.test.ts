@@ -20,8 +20,7 @@ function createHttpConfig(): AppConfig {
         ENABLE_HTTP: "true",
         ENABLE_TERMINAL: "false",
         ENABLE_TELEGRAM: "false",
-        DEFAULT_PROVIDER: "local",
-        FALLBACK_PROVIDER: "local",
+        OPENAI_API_KEY: "test-key",
         ENABLE_WEB_SEARCH: "false",
         WEB_APP_ORIGIN: "http://localhost:5173",
     });

@@ -17,8 +17,7 @@ function createOrchestrator(env: Record<string, string> = {}) {
         ENABLE_HTTP: "false",
         ENABLE_TERMINAL: "false",
         ENABLE_TELEGRAM: "false",
-        DEFAULT_PROVIDER: "local",
-        FALLBACK_PROVIDER: "local",
+        OPENAI_API_KEY: "test-key",
         ENABLE_WEB_SEARCH: "false",
         ...env,
     });
@@ -48,33 +47,6 @@ function createOrchestrator(env: Record<string, string> = {}) {
     });
 }
 
-test("orchestrator stores preferences in durable memory", async () => {
-    const orchestrator = createOrchestrator();
-    const conversationId = "conv-test";
-
-    await orchestrator.handleRequest({
-        requestId: "req-1",
-        channel: "terminal",
-        userId: "user-1",
-        conversationId,
-        message: "I prefer concise answers.",
-        attachments: [],
-        metadata: {},
-    });
-
-    const response = await orchestrator.handleRequest({
-        requestId: "req-2",
-        channel: "terminal",
-        userId: "user-1",
-        conversationId,
-        message: "How should you answer me?",
-        attachments: [],
-        metadata: {},
-    });
-
-    assert.match(response.content, /concise/i);
-});
-
 test("command tools short-circuit the LLM", async () => {
     const orchestrator = createOrchestrator({
         ENABLE_SYSTEM_COM: "true",
@@ -92,7 +64,7 @@ test("command tools short-circuit the LLM", async () => {
 
     assert.equal(response.toolCalls.length, 1);
     assert.equal(response.toolCalls[0]?.name, "system-com");
-    assert.equal(response.providerUsed, "local");
+    assert.equal(response.providerUsed, "openai");
     assert.equal(response.modelUsed, "jarvis-command");
     assert.match(response.content, /^Time\b/);
 });
@@ -163,7 +135,7 @@ test("time tool can resolve city time via geocoding", async (t) => {
 
     assert.equal(response.toolCalls.length, 1);
     assert.equal(response.toolCalls[0]?.name, "system-com");
-    assert.equal(response.providerUsed, "local");
+    assert.equal(response.providerUsed, "openai");
     assert.equal(response.modelUsed, "jarvis-command");
     assert.match(response.content, /^Time\b/);
     assert.match(response.content, /Boston/i);
