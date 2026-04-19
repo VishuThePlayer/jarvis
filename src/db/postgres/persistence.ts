@@ -256,6 +256,78 @@ export class PostgresConversationRepository implements ConversationRepository {
         ]);
     }
 
+    public async countMessages(conversationId: string): Promise<number> {
+        const result = await this.pool.query(
+            `
+            select count(*) as count
+            from messages
+            where conversation_id = $1
+            `,
+            [conversationId],
+        );
+
+        const row = result.rows[0] as { count?: string | number } | undefined;
+        return Number(row?.count ?? 0);
+    }
+
+    public async listRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
+        if (limit <= 0) {
+            return [];
+        }
+
+        const result = await this.pool.query(
+            `
+            select id, conversation_id, role, content, channel, user_id, provider, model, tool_name, created_at
+            from messages
+            where conversation_id = $1
+            order by created_at desc
+            limit $2
+            `,
+            [conversationId, limit],
+        );
+
+        const mapped = result.rows.map((row): MessageRecord => {
+            const typed = row as {
+                id: string;
+                conversation_id: string;
+                role: MessageRecord['role'];
+                content: string;
+                channel: MessageRecord['channel'];
+                user_id: string;
+                provider: string | null;
+                model: string | null;
+                tool_name: string | null;
+                created_at: string;
+            };
+
+            const message: MessageRecord = {
+                id: typed.id,
+                conversationId: typed.conversation_id,
+                role: typed.role,
+                content: typed.content,
+                channel: typed.channel,
+                userId: typed.user_id,
+                createdAt: toDate(typed.created_at),
+            };
+
+            if (typed.provider) {
+                message.provider = typed.provider as ProviderKind;
+            }
+
+            if (typed.model) {
+                message.model = typed.model;
+            }
+
+            if (typed.tool_name) {
+                message.toolName = typed.tool_name;
+            }
+
+            return message;
+        });
+
+        return mapped.reverse();
+    }
+
     public async listMessages(conversationId: string): Promise<MessageRecord[]> {
         const result = await this.pool.query(
             `

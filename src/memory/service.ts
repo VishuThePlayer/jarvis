@@ -63,7 +63,8 @@ export class MemoryService {
     public async captureTurn(input: {
         request: UserRequest;
         response: MessageRecord;
-        messages: MessageRecord[];
+        messageCount: number;
+        recentMessages: MessageRecord[];
     }): Promise<MemoryEntry[]> {
         if (!this.config.memory.enabled || !this.config.memory.autoStore) {
             return [];
@@ -90,7 +91,7 @@ export class MemoryService {
             writes.push(candidate);
         }
 
-        await this.maybeSummarizeConversation(input.messages);
+        await this.maybeSummarizeConversation({ messageCount: input.messageCount, recentMessages: input.recentMessages });
 
         return writes;
     }
@@ -182,12 +183,12 @@ export class MemoryService {
         }));
     }
 
-    private async maybeSummarizeConversation(messages: MessageRecord[]): Promise<void> {
-        if (messages.length < this.config.memory.summaryTriggerMessageCount) {
+    private async maybeSummarizeConversation(input: { messageCount: number; recentMessages: MessageRecord[] }): Promise<void> {
+        if (input.messageCount < this.config.memory.summaryTriggerMessageCount) {
             return;
         }
 
-        const recent = messages.slice(-Math.min(messages.length, 8));
+        const recent = input.recentMessages.slice(-Math.min(input.recentMessages.length, 8));
         const conversationId = recent[0]?.conversationId;
         if (!conversationId) {
             return;

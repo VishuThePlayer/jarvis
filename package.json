@@ -10,6 +10,7 @@
     "test": "npm run build && node --test dist/tests/config.test.js dist/tests/orchestrator.test.js dist/tests/http-server.test.js",
     "dev": "tsc-watch --onSuccess \"node dist/index.js\"",
     "dev:web": "npm --prefix web run dev",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:web\"",
     "tool:new": "node scripts/scaffold-tool.mjs"
   },
   "keywords": [],
@@ -18,6 +19,7 @@
   "description": "Jarvis",
   "type": "module",
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "ts-node": "^10.9.2"
   },
   "dependencies": {

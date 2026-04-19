@@ -18,6 +18,8 @@ export interface ConversationRepository {
     }): Promise<ConversationRecord>;
     getConversation(conversationId: string): Promise<ConversationRecord | null>;
     appendMessage(message: MessageRecord): Promise<void>;
+    countMessages(conversationId: string): Promise<number>;
+    listRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]>;
     listMessages(conversationId: string): Promise<MessageRecord[]>;
     saveSummary(summary: ConversationSummary): Promise<void>;
     getLatestSummary(conversationId: string): Promise<ConversationSummary | null>;

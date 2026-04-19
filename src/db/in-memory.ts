@@ -104,6 +104,20 @@ export class InMemoryConversationRepository implements ConversationRepository {
         }
     }
 
+    public async countMessages(conversationId: string): Promise<number> {
+        return (this.messages.get(conversationId) ?? []).length;
+    }
+
+    public async listRecentMessages(conversationId: string, limit: number): Promise<MessageRecord[]> {
+        if (limit <= 0) {
+            return [];
+        }
+
+        const list = this.messages.get(conversationId) ?? [];
+        const startIndex = Math.max(0, list.length - limit);
+        return list.slice(startIndex).map(cloneMessage);
+    }
+
     public async listMessages(conversationId: string): Promise<MessageRecord[]> {
         const list = this.messages.get(conversationId) ?? [];
 

@@ -206,7 +206,8 @@ export class JarvisOrchestrator implements Orchestrator {
             const memoryWrites = await this.memory.captureTurn({
                 request,
                 response: assistantMessage,
-                messages,
+                messageCount: messages.length,
+                recentMessages: messages,
             });
 
             await this.runs.complete(runId, {

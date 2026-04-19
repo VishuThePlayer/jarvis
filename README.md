@@ -46,10 +46,16 @@ When `PERSISTENCE_DRIVER=postgres`, `DATABASE_URL` must be set and the runtime w
 
 ## Frontend quick start
 
-1. In one terminal, run the backend with `npm run dev` or `npm start`.
-2. In another terminal, install frontend dependencies with `npm install --prefix web`.
-3. Run the frontend with `npm run dev:web`.
-4. Open `http://localhost:5173`.
+1. Install frontend dependencies with `npm install --prefix web`.
+2. Run both the API and frontend together with `npm run dev:all`.
+3. Open `http://localhost:5173`.
+
+If you prefer to run them separately:
+
+1. Run the backend with `npm run dev` or `npm start`.
+2. In another terminal, run the frontend with `npm run dev:web`.
+3. `dev:web` expects the Jarvis API to be reachable at `http://127.0.0.1:3000` by default.
+4. Override the proxy target with `web/.env.example` if your API runs elsewhere.
 
 Frontend build:
 
