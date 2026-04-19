@@ -3,6 +3,7 @@ import type { ModelInvocation, ToolCallResult, ToolParameterDefinition, UserRequ
 import type { ModelProviderRegistry } from "../models/registry.js";
 import type { Logger } from "../observability/logger.js";
 import type { CommandToolDescriptor } from "./contracts.js";
+import { extractTimeIntent } from "./time.js";
 
 export interface ToolRoute {
     tool: string;
@@ -13,46 +14,6 @@ interface ToolRouterDependencies {
     config: AppConfig;
     logger: Logger;
     models: ModelProviderRegistry;
-}
-
-function extractTimeIntent(message: string): { place?: string } | null {
-    const cleaned = message.trim();
-    if (!cleaned) {
-        return null;
-    }
-
-    const normalizePlace = (raw: string) =>
-        raw
-            .trim()
-            .replace(/^[\s:,-]+/, "")
-            .replace(/[?.!]+$/, "")
-            .trim();
-
-    // what time is it (in X)?
-    const inMatch =
-        cleaned.match(
-            /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b\s*(?:in|at)\s+(.+)$/i,
-        ) ??
-        cleaned.match(/\b(?:time)\b\s*(?:in|at)\s+(.+)$/i);
-
-    if (inMatch?.[1]) {
-        const place = normalizePlace(inMatch[1]);
-        return place ? { place } : {};
-    }
-
-    if (/^\s*time(?:\s+(?:please|pls))?\s*[?.!]?\s*$/i.test(cleaned)) {
-        return {};
-    }
-
-    if (
-        /\b(what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b/i.test(
-            cleaned,
-        )
-    ) {
-        return {};
-    }
-
-    return null;
 }
 
 export class ToolRouter {
@@ -90,7 +51,6 @@ export class ToolRouter {
             return { tool: timeTool.name, command };
         }
 
-        // Avoid an extra model call when we do not have a real choice.
         if (routableTools.length < 2) {
             return null;
         }
@@ -181,7 +141,7 @@ export class ToolRouter {
                 args = values.join(" ");
             }
         } catch {
-            // empty or malformed arguments — treat as no-args invocation
+            // empty or malformed arguments
         }
 
         const command = args ? `${descriptor.command} ${args}`.trim() : descriptor.command;
