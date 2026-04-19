@@ -1049,7 +1049,7 @@ Files use `// tool-scaffold:insert:*` comments as injection points:
 | **Enable a tool** | Set `ENABLE_MY_TOOL=true` in `.env` |
 | **Disable a tool** | Set `ENABLE_MY_TOOL=false` in `.env` |
 | **Change the default LLM** | Set `DEFAULT_PROVIDER` and `DEFAULT_MODEL` in `.env` |
-| **Add an API key** | Set `OPENAI_API_KEY` or `OPENROUTER_API_KEY` in `.env` |
+| **Add an API key** | Set `OPENAI_API_KEY` in `.env` |
 | **Switch to Postgres** | Set `PERSISTENCE_DRIVER=postgres` and `DATABASE_URL` in `.env` |
 | **Run the full stack** | `npm run dev:all` |
 | **Run backend only** | `npm run dev` |

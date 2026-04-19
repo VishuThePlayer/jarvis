@@ -224,8 +224,6 @@ For OpenAI-compatible providers (`src/models/providers/openai.ts`):
 - Send `tools` and `tool_choice` fields.
 - Parse `choices[0].message.tool_calls` in responses.
 
-For OpenRouter, implement equivalent behavior if/when their API surface exposes tool calls in the SDK.
-
 ### D) Orchestrator: implement a tool-call loop
 
 Pseudo-flow:

@@ -66,7 +66,6 @@ export async function createApplication(): Promise<Application> {
         async start() {
             logger.info("Starting Jarvis application", {
                 channels: channels.length,
-                defaultProvider: config.providers.defaultProvider,
                 persistenceDriver: config.persistence.driver,
             });
 
