@@ -1,5 +1,7 @@
-import type { ConversationRepository, MemoryRepository, RunRepository } from "./contracts.js";
+import type { AutomationRepository, ConversationRepository, MemoryRepository, RunRepository } from "./contracts.js";
 import type {
+    AutomationRun,
+    AutomationTask,
     ConversationRecord,
     ConversationSummary,
     MemoryEntry,
@@ -46,6 +48,24 @@ function cloneSummary(summary: ConversationSummary): ConversationSummary {
         sourceMessageIds: [...summary.sourceMessageIds],
         createdAt: new Date(summary.createdAt),
         updatedAt: new Date(summary.updatedAt),
+    };
+}
+
+function cloneAutomationTask(task: AutomationTask): AutomationTask {
+    return {
+        ...task,
+        nextRunAt: new Date(task.nextRunAt),
+        createdAt: new Date(task.createdAt),
+        updatedAt: new Date(task.updatedAt),
+        ...(task.lastRunAt ? { lastRunAt: new Date(task.lastRunAt) } : {}),
+    };
+}
+
+function cloneAutomationRun(run: AutomationRun): AutomationRun {
+    return {
+        ...run,
+        startedAt: new Date(run.startedAt),
+        completedAt: new Date(run.completedAt),
     };
 }
 
@@ -195,10 +215,120 @@ export class InMemoryMemoryRepository implements MemoryRepository {
     }
 }
 
+export class InMemoryAutomationRepository implements AutomationRepository {
+    private readonly tasks = new Map<string, AutomationTask>();
+    private readonly runs = new Map<string, AutomationRun[]>();
+
+    public async createTask(task: AutomationTask): Promise<void> {
+        this.tasks.set(task.id, cloneAutomationTask(task));
+        this.runs.set(task.id, []);
+    }
+
+    public async getTask(taskId: string): Promise<AutomationTask | null> {
+        const task = this.tasks.get(taskId);
+        return task ? cloneAutomationTask(task) : null;
+    }
+
+    public async listTasksByUser(userId: string, includeInactive = false): Promise<AutomationTask[]> {
+        return [...this.tasks.values()]
+            .filter((task) => task.userId === userId)
+            .filter((task) => includeInactive || task.status === "active")
+            .sort((left, right) => left.nextRunAt.getTime() - right.nextRunAt.getTime())
+            .map(cloneAutomationTask);
+    }
+
+    public async listRunsByTask(taskId: string): Promise<AutomationRun[]> {
+        return (this.runs.get(taskId) ?? [])
+            .sort((left, right) => right.startedAt.getTime() - left.startedAt.getTime())
+            .map(cloneAutomationRun);
+    }
+
+    public async getDueTasks(now: Date, limit: number): Promise<AutomationTask[]> {
+        if (limit <= 0) {
+            return [];
+        }
+
+        return [...this.tasks.values()]
+            .filter((task) => task.status === "active" && task.nextRunAt.getTime() <= now.getTime())
+            .sort((left, right) => left.nextRunAt.getTime() - right.nextRunAt.getTime())
+            .slice(0, limit)
+            .map(cloneAutomationTask);
+    }
+
+    public async saveRun(run: AutomationRun): Promise<void> {
+        const list = this.runs.get(run.taskId) ?? [];
+        list.push(cloneAutomationRun(run));
+        this.runs.set(run.taskId, list);
+    }
+
+    public async rescheduleTask(taskId: string, nextRunAt: Date, lastRunAt: Date): Promise<void> {
+        const task = this.tasks.get(taskId);
+        if (!task) {
+            return;
+        }
+
+        const { error: _error, ...taskWithoutError } = task;
+        this.tasks.set(taskId, {
+            ...taskWithoutError,
+            nextRunAt,
+            lastRunAt,
+            updatedAt: lastRunAt,
+        });
+    }
+
+    public async completeTask(taskId: string, completedAt: Date): Promise<void> {
+        const task = this.tasks.get(taskId);
+        if (!task) {
+            return;
+        }
+
+        const { error: _error, ...taskWithoutError } = task;
+        this.tasks.set(taskId, {
+            ...taskWithoutError,
+            status: "completed",
+            lastRunAt: completedAt,
+            updatedAt: completedAt,
+        });
+    }
+
+    public async failTask(taskId: string, failedAt: Date, error: string): Promise<void> {
+        this.patchTask(taskId, {
+            status: "failed",
+            lastRunAt: failedAt,
+            updatedAt: failedAt,
+            error,
+        });
+    }
+
+    public async cancelTask(userId: string, taskId: string, canceledAt: Date): Promise<boolean> {
+        const task = this.tasks.get(taskId);
+        if (!task || task.userId !== userId || task.status !== "active") {
+            return false;
+        }
+
+        this.tasks.set(taskId, {
+            ...task,
+            status: "canceled",
+            updatedAt: canceledAt,
+        });
+        return true;
+    }
+
+    private patchTask(taskId: string, patch: Partial<AutomationTask>): void {
+        const task = this.tasks.get(taskId);
+        if (!task) {
+            return;
+        }
+
+        this.tasks.set(taskId, { ...task, ...patch });
+    }
+}
+
 export class InMemoryPersistence {
     public readonly conversations = new InMemoryConversationRepository();
     public readonly runs = new InMemoryRunRepository();
     public readonly memories = new InMemoryMemoryRepository();
+    public readonly automations = new InMemoryAutomationRepository();
 
     public async stop(): Promise<void> {
         // No-op for the in-memory persistence adapter.

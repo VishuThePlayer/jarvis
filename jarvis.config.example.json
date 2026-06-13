@@ -1,0 +1,58 @@
+{
+  "providers": {
+    "openai": {
+      "apiKey": "",
+      "baseUrl": "https://api.openai.com/v1"
+    },
+    "zep": {
+      "apiKey": "",
+      "baseUrl": "https://api.getzep.com"
+    }
+  },
+  "models": {
+    "default": "gpt-4o",
+    "fast": "gpt-4o-mini",
+    "reasoning": "o1",
+    "embedding": "text-embedding-3-small"
+  },
+  "agents": {
+    "jarvis": {}
+  },
+  "channels": {
+    "terminal": true,
+    "http": true,
+    "telegram": {
+      "enabled": false,
+      "botToken": ""
+    }
+  },
+  "http": {},
+  "tools": {
+    "webSearch": {
+      "enabled": true,
+      "allowByDefault": true,
+      "maxResults": 5
+    },
+    "time": true,
+    "toolRouter": true,
+    "memoryLookup": true,
+    "powershell": true,
+    "automation": true
+  },
+  "memory": {
+    "enabled": true,
+    "backend": "local",
+    "autoStore": true,
+    "retrievalLimit": 5,
+    "summaryTriggerMessages": 8
+  },
+  "orchestrator": {
+    "temperature": 0.3,
+    "historyLimit": 50
+  },
+  "automation": {
+    "enabled": true,
+    "pollIntervalMs": 30000,
+    "maxDuePerTick": 5
+  }
+}

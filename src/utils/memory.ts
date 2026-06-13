@@ -10,5 +10,7 @@ export function memoryKindBoost(kind: MemoryEntry["kind"]): number {
             return 0.1;
         case "summary":
             return 0.05;
+        default:
+            return 0;
     }
 }

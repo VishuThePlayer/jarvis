@@ -232,6 +232,13 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         }
 
         await this.sendChatAction(message.chat.id, "typing");
+        let progressMessageId: number | undefined;
+        let lastProgressEditAt = 0;
+        try {
+            progressMessageId = await this.sendMessage(message.chat.id, "<i>Working...</i>");
+        } catch {
+            // best-effort progress message
+        }
 
         let fullContent = "";
 
@@ -251,6 +258,13 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         })) {
             if (event.type === "delta") {
                 fullContent += event.text;
+            } else if (event.type === "progress") {
+                const now = Date.now();
+                if (progressMessageId && now - lastProgressEditAt >= 1200) {
+                    lastProgressEditAt = now;
+                    const text = this.renderProgress(event.progress.phase, event.progress.message);
+                    await this.editMessage(message.chat.id, progressMessageId, text);
+                }
             } else if (event.type === "response") {
                 fullContent = event.response.content;
             } else if (event.type === "error") {
@@ -258,7 +272,11 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             }
         }
 
-        await this.sendMessage(message.chat.id, fullContent);
+        if (progressMessageId) {
+            await this.editMessage(message.chat.id, progressMessageId, fullContent);
+        } else {
+            await this.sendMessage(message.chat.id, fullContent);
+        }
     }
 
     private isBotAddressed(message: NonNullable<TelegramUpdate["message"]>): boolean {
@@ -343,7 +361,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         return data.result ?? [];
     }
 
-    private async sendMessage(chatId: number, text: string): Promise<void> {
+    private async sendMessage(chatId: number, text: string): Promise<number | undefined> {
         const fallbackText = "Sorry - I could not generate a reply. Please try again.";
         const trimmed = (text ?? "").slice(0, 4096).trim();
         const initialText = trimmed.length > 0 ? trimmed : fallbackText;
@@ -362,7 +380,13 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         });
 
         if (response.ok) {
-            return;
+            try {
+                const data = (await response.json()) as TelegramResponse<{ message_id?: number }>;
+                if (data.ok) return data.result.message_id;
+            } catch {
+                return undefined;
+            }
+            return undefined;
         }
 
         const detail = await response.text();
@@ -399,11 +423,41 @@ export class TelegramChannelAdapter implements ChannelAdapter {
             });
 
             if (response.ok) {
-                return;
+                try {
+                    const data = (await response.json()) as TelegramResponse<{ message_id?: number }>;
+                    if (data.ok) return data.result.message_id;
+                } catch {
+                    return undefined;
+                }
+                return undefined;
             }
         }
 
         throw new Error(`Telegram sendMessage failed with ${response.status}: ${detail}`);
+    }
+
+    private async editMessage(chatId: number, messageId: number, text: string): Promise<void> {
+        const trimmed = (text ?? "").slice(0, 4096).trim();
+        const safe = trimmed.length > 0 ? trimmed : "Done.";
+        try {
+            await fetch(this.buildApiUrl("editMessageText"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                    text: safe,
+                    parse_mode: "HTML",
+                    disable_web_page_preview: true,
+                }),
+            });
+        } catch {
+            // best-effort
+        }
+    }
+
+    private renderProgress(phase: string, message: string): string {
+        return `<i>[${escapeTelegramHtml(phase)}]</i> ${escapeTelegramHtml(message)}`;
     }
 
     private buildApiUrl(method: string, params?: Record<string, string>): string {

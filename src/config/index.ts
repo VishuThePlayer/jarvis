@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CommandToolDescriptor } from "../tools/contracts.js";
 import type { ChannelKind } from "../types/core.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -42,8 +43,8 @@ export interface AppConfig {
         rateLimitWindowMs: number;
         rateLimitMaxRequests: number;
     };
-    web: {
-        appOrigin?: string;
+    http: {
+        allowedOrigin?: string;
     };
     channels: {
         terminal: {
@@ -65,6 +66,10 @@ export interface AppConfig {
             baseUrl: string;
             timeoutMs: number;
             maxRetries: number;
+        };
+        zep: {
+            apiKey?: string;
+            baseUrl: string;
         };
     };
     models: {
@@ -91,14 +96,28 @@ export interface AppConfig {
             enabled: boolean;
             perChannel: Record<ChannelKind, boolean>;
         };
+        powershell: {
+            enabled: boolean;
+            perChannel: Record<ChannelKind, boolean>;
+        };
         memoryLookup: {
+            enabled: boolean;
+            perChannel: Record<ChannelKind, boolean>;
+        };
+        automation: {
             enabled: boolean;
             perChannel: Record<ChannelKind, boolean>;
         };
         // tool-scaffold:insert:tools-type
     };
+    automation: {
+        enabled: boolean;
+        pollIntervalMs: number;
+        maxDuePerTick: number;
+    };
     memory: {
         enabled: boolean;
+        backend: "local" | "zep";
         autoStore: boolean;
         retrievalLimit: number;
         summaryTriggerMessageCount: number;
@@ -123,6 +142,7 @@ const envSchema = z.object({
     MAX_MESSAGE_LENGTH: z.coerce.number().int().positive().default(10000),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
     RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
+    HTTP_ALLOWED_ORIGIN: z.string().url().optional(),
     WEB_APP_ORIGIN: z.string().url().optional(),
     ENABLE_HTTP: envBoolean.optional().default(true),
     ENABLE_TERMINAL: envBoolean.optional().default(true),
@@ -132,6 +152,8 @@ const envSchema = z.object({
     TELEGRAM_LONG_POLL_TIMEOUT_SEC: z.coerce.number().int().min(0).max(50).default(30),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
+    ZEP_API_KEY: z.string().optional(),
+    ZEP_BASE_URL: z.string().url().default("https://api.getzep.com"),
     LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
     LLM_MAX_RETRIES: z.coerce.number().int().min(0).max(10).default(3),
     DEFAULT_MODEL: z.string().min(1).default("gpt-4o"),
@@ -145,8 +167,13 @@ const envSchema = z.object({
     ENABLE_TIME: envBoolean.optional().default(true),
     ENABLE_TOOL_ROUTER: envBoolean.optional().default(true),
     ENABLE_MEMORY_LOOKUP: envBoolean.optional().default(true),
+    ENABLE_POWERSHELL: envBoolean.optional().default(true),
+    ENABLE_AUTOMATION: envBoolean.optional().default(true),
+    AUTOMATION_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(30000),
+    AUTOMATION_MAX_DUE_PER_TICK: z.coerce.number().int().positive().max(100).default(5),
     // tool-scaffold:insert:env
     ENABLE_MEMORY: envBoolean.optional().default(true),
+    MEMORY_BACKEND: z.enum(["local", "zep"]).default("local"),
     AUTO_STORE_MEMORY: envBoolean.optional().default(true),
     MEMORY_RETRIEVAL_LIMIT: z.coerce.number().int().positive().max(10).default(5),
     MEMORY_SUMMARY_TRIGGER_MESSAGES: z.coerce.number().int().positive().default(8),
@@ -156,14 +183,19 @@ const envSchema = z.object({
     DATABASE_URL: z.string().optional(),
 });
 
-const ALL_CHANNELS_ENABLED: Record<ChannelKind, boolean> = { terminal: true, http: true, telegram: true };
+const ALL_CHANNELS_ENABLED: Record<ChannelKind, boolean> = {
+    terminal: true,
+    http: true,
+    telegram: true,
+};
 
 export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
     const parsed = envSchema.parse(env);
     const telegram = parsed.TELEGRAM_BOT_TOKEN?.trim();
     const openAiKey = parsed.OPENAI_API_KEY?.trim();
+    const zepApiKey = parsed.ZEP_API_KEY?.trim();
     const databaseUrl = parsed.DATABASE_URL?.trim();
-    const webAppOrigin = parsed.WEB_APP_ORIGIN?.trim();
+    const allowedOrigin = parsed.HTTP_ALLOWED_ORIGIN?.trim() ?? parsed.WEB_APP_ORIGIN?.trim();
     const apiKey = parsed.API_KEY?.trim();
 
     if (parsed.PERSISTENCE_DRIVER === "postgres" && !databaseUrl) {
@@ -182,8 +214,8 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             rateLimitWindowMs: parsed.RATE_LIMIT_WINDOW_MS,
             rateLimitMaxRequests: parsed.RATE_LIMIT_MAX_REQUESTS,
         },
-        web: {
-            ...(webAppOrigin ? { appOrigin: webAppOrigin } : {}),
+        http: {
+            ...(allowedOrigin ? { allowedOrigin } : {}),
         },
         channels: {
             terminal: {
@@ -206,6 +238,10 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
                 timeoutMs: parsed.LLM_TIMEOUT_MS,
                 maxRetries: parsed.LLM_MAX_RETRIES,
             },
+            zep: {
+                ...(zepApiKey ? { apiKey: zepApiKey } : {}),
+                baseUrl: parsed.ZEP_BASE_URL,
+            },
         },
         models: {
             default: parsed.DEFAULT_MODEL,
@@ -213,7 +249,9 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             reasoning: parsed.REASONING_MODEL,
             embedding: parsed.EMBEDDING_MODEL,
         },
-        orchestrator: { historyMessageLimit: parsed.ORCHESTRATOR_HISTORY_MESSAGE_LIMIT },
+        orchestrator: {
+            historyMessageLimit: parsed.ORCHESTRATOR_HISTORY_MESSAGE_LIMIT,
+        },
         tools: {
             webSearch: {
                 enabled: parsed.ENABLE_WEB_SEARCH,
@@ -225,6 +263,10 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
                 enabled: parsed.ENABLE_TIME,
                 perChannel: ALL_CHANNELS_ENABLED,
             },
+            powershell: {
+                enabled: parsed.ENABLE_POWERSHELL,
+                perChannel: ALL_CHANNELS_ENABLED,
+            },
             toolRouter: {
                 enabled: parsed.ENABLE_TOOL_ROUTER,
                 perChannel: ALL_CHANNELS_ENABLED,
@@ -233,10 +275,20 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
                 enabled: parsed.ENABLE_MEMORY_LOOKUP,
                 perChannel: ALL_CHANNELS_ENABLED,
             },
+            automation: {
+                enabled: parsed.ENABLE_AUTOMATION,
+                perChannel: ALL_CHANNELS_ENABLED,
+            },
             // tool-scaffold:insert:tools-value
+        },
+        automation: {
+            enabled: parsed.ENABLE_AUTOMATION,
+            pollIntervalMs: parsed.AUTOMATION_POLL_INTERVAL_MS,
+            maxDuePerTick: parsed.AUTOMATION_MAX_DUE_PER_TICK,
         },
         memory: {
             enabled: parsed.ENABLE_MEMORY,
+            backend: parsed.MEMORY_BACKEND,
             autoStore: parsed.AUTO_STORE_MEMORY,
             retrievalLimit: parsed.MEMORY_RETRIEVAL_LIMIT,
             summaryTriggerMessageCount: parsed.MEMORY_SUMMARY_TRIGGER_MESSAGES,
@@ -250,4 +302,49 @@ export function createConfig(env: NodeJS.ProcessEnv): AppConfig {
             },
         },
     };
+}
+
+export function describeTools(config: AppConfig, tools: CommandToolDescriptor[]): string {
+    if (tools.length === 0) {
+        return "No command tools are registered.";
+    }
+
+    const isEnabled = (toolName: string): boolean => {
+        if (toolName === "time") {
+            return config.tools.time.enabled;
+        }
+
+        if (toolName === "memory-lookup") {
+            return config.memory.enabled && config.tools.memoryLookup.enabled;
+        }
+
+        if (toolName === "memory-saving") {
+            return config.memory.enabled && config.tools.memoryLookup.enabled;
+        }
+
+        if (toolName.startsWith("ps-")) {
+            return config.tools.powershell.enabled;
+        }
+
+        if (toolName === "automation") {
+            return config.automation.enabled && config.tools.automation.enabled;
+        }
+
+        return true;
+    };
+
+    return tools
+        .map((tool) => {
+            const examples = tool.examples.length > 0 ? tool.examples.join(" | ") : "none";
+            const route = tool.autoRoute ? "auto+manual" : "manual";
+            const hint = tool.argsHint ? ` ${tool.argsHint}` : "";
+            return [
+                `${tool.name} (${tool.command}${hint})`,
+                `- enabled: ${isEnabled(tool.name)}`,
+                `- route: ${route}`,
+                `- description: ${tool.description}`,
+                `- examples: ${examples}`,
+            ].join("\n");
+        })
+        .join("\n\n");
 }

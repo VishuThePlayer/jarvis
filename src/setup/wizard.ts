@@ -20,17 +20,20 @@ export async function runSetupWizard(): Promise<JarvisConfigFile> {
         const config: JarvisConfigFile = {
             providers: {
                 openai: providers.openai,
+                zep: providers.zep,
             },
             models,
             agents: { jarvis: {} },
             channels,
+            http: {},
             tools: features.tools,
             memory: features.memory,
             orchestrator: { temperature: 0.3, historyLimit: 50 },
+            automation: { enabled: features.automation, pollIntervalMs: 30000, maxDuePerTick: 5 },
         };
 
         console.log();
-        console.log(`${GREEN}${BOLD}  Setup complete!${RESET}`);
+        console.log(`${GREEN}${BOLD}  Setup complete.${RESET}`);
         console.log();
 
         return config;
@@ -41,14 +44,13 @@ export async function runSetupWizard(): Promise<JarvisConfigFile> {
 
 function printBanner(): void {
     console.log();
-    console.log(`${CYAN}${BOLD}  ╔══════════════════════════════════════╗${RESET}`);
-    console.log(`${CYAN}${BOLD}  ║       Jarvis — First Time Setup      ║${RESET}`);
-    console.log(`${CYAN}${BOLD}  ╚══════════════════════════════════════╝${RESET}`);
+    console.log(`${CYAN}${BOLD}  Jarvis setup${RESET}`);
+    console.log(`${CYAN}${BOLD}  ------------${RESET}`);
     console.log();
 }
 
 function stepHeader(step: number, total: number, title: string): void {
-    console.log(`${CYAN}  Step ${step}/${total} — ${title}${RESET}`);
+    console.log(`${CYAN}  Step ${step}/${total} - ${title}${RESET}`);
     console.log();
 }
 
@@ -61,12 +63,16 @@ async function prompt(rl: Interface, question: string, defaultValue?: string): P
 async function promptYesNo(rl: Interface, question: string, defaultYes: boolean): Promise<boolean> {
     const hint = defaultYes ? "Y/n" : "y/N";
     const answer = (await rl.question(`  ${question} (${hint}): `)).trim().toLowerCase();
-    if (!answer) return defaultYes;
+    if (!answer) {
+        return defaultYes;
+    }
+
     return answer === "y" || answer === "yes";
 }
 
 interface ProviderSetup {
     openai: { apiKey: string; baseUrl: string };
+    zep: { apiKey: string; baseUrl: string };
 }
 
 async function stepProviders(rl: Interface): Promise<ProviderSetup> {
@@ -74,10 +80,11 @@ async function stepProviders(rl: Interface): Promise<ProviderSetup> {
 
     const result: ProviderSetup = {
         openai: { apiKey: "", baseUrl: "https://api.openai.com/v1" },
+        zep: { apiKey: "", baseUrl: "https://api.getzep.com" },
     };
 
     result.openai.apiKey = await prompt(rl, "OpenAI API Key");
-    const customBase = await promptYesNo(rl, "Custom base URL? (for OpenAI-compatible APIs)", false);
+    const customBase = await promptYesNo(rl, "Use a custom OpenAI-compatible base URL?", false);
     if (customBase) {
         result.openai.baseUrl = await prompt(rl, "Base URL", "https://api.openai.com/v1");
     }
@@ -104,13 +111,13 @@ async function stepModels(rl: Interface): Promise<ModelSetup> {
     stepHeader(2, 4, "Models");
 
     console.log(`  ${DIM}Configure which models to use for each task.${RESET}`);
-    console.log(`  ${DIM}Press Enter to accept the default.${RESET}`);
+    console.log(`  ${DIM}Press Enter to keep the default.${RESET}`);
     console.log();
 
     const result: ModelSetup = {
         default: await prompt(rl, "Default model", MODEL_DEFAULTS.default),
-        fast: await prompt(rl, "Fast model (quick tasks)", MODEL_DEFAULTS.fast),
-        reasoning: await prompt(rl, "Reasoning model (complex tasks)", MODEL_DEFAULTS.reasoning),
+        fast: await prompt(rl, "Fast model", MODEL_DEFAULTS.fast),
+        reasoning: await prompt(rl, "Reasoning model", MODEL_DEFAULTS.reasoning),
         embedding: await prompt(rl, "Embedding model", MODEL_DEFAULTS.embedding),
     };
 
@@ -138,12 +145,12 @@ async function stepChannels(rl: Interface): Promise<ChannelSetup> {
         telegram: { enabled: false, botToken: "" },
     };
 
-    result.http = await promptYesNo(rl, "Enable HTTP API? (needed for the web UI)", true);
+    result.http = await promptYesNo(rl, "Enable the HTTP API?", true);
     result.terminal = await promptYesNo(rl, "Enable terminal chat?", true);
 
     const enableTelegram = await promptYesNo(rl, "Enable Telegram bot?", false);
     if (enableTelegram) {
-        const token = await prompt(rl, "Telegram Bot Token (from @BotFather)");
+        const token = await prompt(rl, "Telegram bot token");
         result.telegram = { enabled: true, botToken: token };
     }
 
@@ -156,9 +163,14 @@ interface FeatureSetup {
         webSearch: { enabled: boolean; allowByDefault?: boolean; maxResults?: number };
         time: boolean;
         toolRouter: boolean;
+        memoryLookup: boolean;
+        powershell: boolean;
+        automation: boolean;
     };
+    automation: boolean;
     memory: {
         enabled: boolean;
+        backend: "local" | "zep";
         autoStore: boolean;
         retrievalLimit: number;
         summaryTriggerMessages: number;
@@ -169,8 +181,11 @@ async function stepFeatures(rl: Interface): Promise<FeatureSetup> {
     stepHeader(4, 4, "Features");
 
     const webSearch = await promptYesNo(rl, "Enable web search?", true);
-    const memory = await promptYesNo(rl, "Enable memory (remembers facts & preferences)?", true);
-    const toolRouter = await promptYesNo(rl, "Enable tool router (natural language -> commands)?", true);
+    const memory = await promptYesNo(rl, "Enable memory?", true);
+    const memoryLookup = await promptYesNo(rl, "Enable memory lookup tool?", true);
+    const powerShell = await promptYesNo(rl, "Enable PowerShell tools?", true);
+    const automation = await promptYesNo(rl, "Enable task automation?", true);
+    const toolRouter = await promptYesNo(rl, "Enable tool router?", true);
 
     console.log();
     return {
@@ -178,9 +193,14 @@ async function stepFeatures(rl: Interface): Promise<FeatureSetup> {
             webSearch: { enabled: webSearch, allowByDefault: true, maxResults: 5 },
             time: true,
             toolRouter,
+            memoryLookup,
+            powershell: powerShell,
+            automation,
         },
+        automation,
         memory: {
             enabled: memory,
+            backend: "local",
             autoStore: memory,
             retrievalLimit: 5,
             summaryTriggerMessages: 8,

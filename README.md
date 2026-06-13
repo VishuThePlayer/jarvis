@@ -1,77 +1,70 @@
 # Jarvis
 
-Jarvis is a local-first assistant runtime with clear boundaries between channels, orchestration, tools, providers, and memory.
+Jarvis is a TypeScript assistant runtime. It accepts requests from terminal, HTTP, and Telegram, decides whether a safe tool should run, calls an OpenAI-compatible model when needed, persists conversation state, and attaches long-term memory.
 
-## Frontend
+This repository is the backend runtime only. There is no first-party web frontend in this codebase.
 
-Jarvis now also includes a dedicated React frontend in `web/`.
+## What This Repo Is
 
-- `web/` is a separate Vite + React + TypeScript application.
-- The backend remains API-first and no longer serves the branded site shell.
-- The frontend talks to the existing Jarvis HTTP routes: `/health`, `/models`, `/chat`, `/chat/stream`, `/conversations/:id`, and `/conversations/:id/messages`.
-- During local development, the Vite dev server proxies API requests to the backend on `http://localhost:3000`.
+- A multi-channel assistant runtime.
+- A single-orchestrator architecture with shared behavior across channels.
+- A backend that supports in-memory or Postgres persistence.
+- A tool-driven system with exact commands, AI-based command routing, and pre-model enrichment.
+- A task automation runtime for scheduled reminders and recurring AI prompt jobs.
+- A codebase meant to be understandable by one developer reading the source from top to bottom.
 
-## What is implemented
+## What This Repo Is Not
 
-- `src/orchestrator/index.ts` is the central request hub.
-- `src/channels/terminal/index.ts`, `src/server/http-server.ts`, and `src/channels/telegram/index.ts` are channel adapters.
-- `src/models/registry.ts` selects models via the OpenAI-compatible provider.
-- `src/tools/web-search.ts` adds configurable web search.
-- `src/memory/service.ts` handles retrieval, summarization, and durable preference/fact extraction.
-- `src/db/in-memory.ts` and `src/db/postgres/persistence.ts` provide persistence adapters (memory or Postgres).
-- `db/postgres/schema.sql` is the reference schema for Postgres (text IDs; pgvector optional).
+- Not a frontend app.
+- Not a general plugin marketplace.
+- Not a multi-agent platform with autonomous background workers.
+- Not a framework for arbitrary unsafe system automation.
+- Not a source-of-truth for generated `dist/` output. Source lives in `src/`.
 
-Further docs:
-- `docs/JARVIS-ARCHITECTURE.md`
-- `docs/TOOLS.md`
+## Read This First
 
-## Current persistence status
+If you are new to the project, read the docs in this order:
 
-Persistence is selected via `PERSISTENCE_DRIVER`:
+1. [Codebase Handbook](./docs/CODEBASE-HANDBOOK.md)
+2. [Tools And Routing](./docs/TOOLS-AND-ROUTING.md)
+3. [Operations](./docs/OPERATIONS.md)
 
-- `memory` (default): local-only, no external dependencies.
-- `postgres`: durable storage for conversations/messages/runs/memory in Postgres via `pg`.
+That order matches how the runtime is structured:
 
-When `PERSISTENCE_DRIVER=postgres`, `DATABASE_URL` must be set and the runtime will auto-create the target database (for example `jarvis`) and apply the schema on startup.
+1. overall architecture
+2. tool behavior and routing
+3. setup, configuration, and runbook concerns
 
-### pgvector (optional)
+## Quick Start
 
-To store embeddings and enable vector search in Postgres:
+1. Install dependencies with `npm install`.
+2. Copy `jarvis.config.example.json` to `jarvis.config.json`, or run `npm run setup`.
+3. Add `OPENAI_API_KEY` through `jarvis.config.json` or `.env`.
+4. Optional: enable Postgres with `PERSISTENCE_DRIVER=postgres` and `DATABASE_URL=...`.
+5. Optional: enable Zep-backed memory with `MEMORY_BACKEND=zep` and `ZEP_API_KEY=...`.
+6. Build with `npm run build`.
+7. Start with `npm start`.
 
-- Install pgvector on your Postgres instance.
-- Set ENABLE_PGVECTOR=true and PGVECTOR_DIMENSIONS to match your embedding model (default 1536).
+## Daily Commands
 
-On startup, Jarvis will attempt to create the ector extension and add memory_entries.embedding.
-You can also apply db/postgres/pgvector.sql manually.
+| Command | Purpose |
+| --- | --- |
+| `npm run build` | Compile `src/` into `dist/`. |
+| `npm start` | Run the compiled runtime. |
+| `npm run dev` | Watch TypeScript and restart the runtime after successful rebuilds. |
+| `npm test` | Build and run the current test suite. |
+| `npm run setup` | Run the interactive setup wizard and write `jarvis.config.json`. |
+| `npm run tool:new -- <tool-id>` | Scaffold a new tool and update the tool registration markers. |
 
-## Quick start
+## Runtime Surface
 
-1. Copy `.env.example` to `.env`.
-2. Set `OPENAI_API_KEY` (supports OpenAI-compatible APIs via `OPENAI_BASE_URL`).
-3. (Optional) Set `PERSISTENCE_DRIVER=memory` if you do not want Postgres.
-4. Set `WEB_APP_ORIGIN=http://localhost:5173` if you will run the dedicated web app locally.
-5. Run `npm run build`.
-6. Run `npm start`.
+Enabled channels share one orchestrator:
 
-## Frontend quick start
+- terminal REPL
+- HTTP API
+- Telegram bot
 
-1. Install frontend dependencies with `npm install --prefix web`.
-2. Run both the API and frontend together with `npm run dev:all`.
-3. Open `http://localhost:5173`.
-
-If you prefer to run them separately:
-
-1. Run the backend with `npm run dev` or `npm start`.
-2. In another terminal, run the frontend with `npm run dev:web`.
-3. `dev:web` expects the Jarvis API to be reachable at `http://127.0.0.1:3000` by default.
-4. Override the proxy target with `web/.env.example` if your API runs elsewhere.
-
-Frontend build:
-
-- `npm run build:web` builds the dedicated React app.
-- `npm run build:all` builds both the backend and frontend.
-
-## HTTP API
+Current HTTP endpoints:
 
 - `GET /health`
 - `GET /models`
@@ -79,11 +72,53 @@ Frontend build:
 - `POST /chat/stream`
 - `GET /conversations/:id`
 - `GET /conversations/:id/messages`
+- `GET /automations`
+- `GET /automations/:id/runs`
+- `DELETE /automations/:id`
 
-## Terminal commands
+## Architecture At A Glance
 
-- `/models`
-- `/model <provider:model>`
-- `/search <query>`
-- `/new`
-- `/exit`
+The request path is intentionally linear:
+
+1. a channel adapter builds a `UserRequest`
+2. `JarvisOrchestrator` creates or resumes a conversation run
+3. exact command tools get first chance
+4. `ToolRouter` may select one command tool through the fast model
+5. if no command tool handles the turn, pre-model tools run
+6. `JarvisAgent` builds the main prompt with memory and current-turn tool results
+7. `ModelProviderRegistry` calls the chosen model provider
+8. the assistant message, run state, and memory updates are persisted
+
+Automation runs beside the request path. `AutomationService` polls due tasks, stores run history, emits terminal notifications, and uses the orchestrator for recurring prompt jobs.
+
+## Repo Map
+
+| Path | Why it exists |
+| --- | --- |
+| `src/index.ts` | Process entrypoint, setup trigger, config-file env application, signal handling. |
+| `src/app/create-runtime.ts` | Composition root for the whole runtime. |
+| `src/automation/` | Scheduled reminder and recurring prompt job service. |
+| `src/orchestrator/` | Central request lifecycle and streaming lifecycle. |
+| `src/channels/` | Terminal and Telegram adapters plus shared channel contract. |
+| `src/server/` | HTTP adapter. |
+| `src/tools/` | Command tools, pre-model tools, registry, and router. |
+| `src/agents/` | Prompt builders for the assistant and tool-result formatter. |
+| `src/models/` | Model provider contracts, registry, and OpenAI-compatible implementation. |
+| `src/memory/` | Memory backend selection and memory provider implementations. |
+| `src/db/` | Storage contracts plus in-memory and Postgres implementations. |
+| `src/config/` | Runtime config schema and config-file schema. |
+| `src/setup/` | Interactive setup flow and config-file bootstrap logic. |
+| `src/utils/` | Narrow stateless helpers. |
+| `src/tests/` | Integration-style tests over the real runtime stack. |
+| `docs/` | Owner docs and onboarding docs. |
+
+## Documentation Rules
+
+When code changes, update docs in the same change if the behavior or ownership changed.
+
+Use these rules:
+
+- Update [Codebase Handbook](./docs/CODEBASE-HANDBOOK.md) when control flow, module boundaries, or architecture changes.
+- Update [Tools And Routing](./docs/TOOLS-AND-ROUTING.md) when a tool, tool contract, router rule, or formatter behavior changes.
+- Update [Operations](./docs/OPERATIONS.md) when config, secrets, persistence, startup, or deployment behavior changes.
+- Treat the source code as the final authority. Docs must describe what the code does now, not what it did two refactors ago.

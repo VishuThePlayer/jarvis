@@ -4,11 +4,11 @@ import { runSetupIfNeeded, applyConfigFileToEnv } from "./setup/index.js";
 await runSetupIfNeeded();
 applyConfigFileToEnv();
 
-const { createApplication } = await import("./app/create-application.js");
-const application = await createApplication();
+const { createRuntime } = await import("./app/create-runtime.js");
+const runtime = await createRuntime();
 
 const shutdown = async (signal: string) => {
-    await application.stop();
+    await runtime.stop();
     process.exit(signal === "SIGTERM" ? 0 : 130);
 };
 
@@ -26,8 +26,8 @@ process.on("unhandledRejection", (reason) => {
 });
 
 process.on("uncaughtException", (error) => {
-    console.error(JSON.stringify({ level: "error", msg: "Uncaught exception — shutting down", error: error.stack ?? error.message }));
-    void application.stop().finally(() => process.exit(1));
+    console.error(JSON.stringify({ level: "error", msg: "Uncaught exception - shutting down", error: error.stack ?? error.message }));
+    void runtime.stop().finally(() => process.exit(1));
 });
 
-await application.start();
+await runtime.start();

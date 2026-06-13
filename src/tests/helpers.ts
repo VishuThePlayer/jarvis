@@ -1,6 +1,8 @@
 import { AgentRegistry } from "../agents/registry/index.js";
 import { JarvisAgent } from "../agents/jarvis/index.js";
-import { type AppConfig, createConfig } from "../config/index.js";
+import { ToolResultFormatterAgent } from "../agents/tool-result-formatter/index.js";
+import { AutomationService } from "../automation/service.js";
+import { createConfig } from "../config/index.js";
 import { InMemoryPersistence } from "../db/in-memory.js";
 import { MemoryService } from "../memory/service.js";
 import { ModelProviderRegistry } from "../models/registry.js";
@@ -28,9 +30,11 @@ export function createTestStack(env: Record<string, string> = {}) {
         logger,
         memories: persistence.memories,
         conversations: persistence.conversations,
+        models,
     });
-    const agents = new AgentRegistry(new JarvisAgent(config));
-    const tools = new ToolRegistry({ config, logger, memories: persistence.memories });
+    const automation = new AutomationService({ config, logger, automations: persistence.automations });
+    const agents = new AgentRegistry(new JarvisAgent(config), new ToolResultFormatterAgent(config));
+    const tools = new ToolRegistry({ config, logger, memory, automation });
     const toolRouter = new ToolRouter({ config, logger, models });
     const orchestrator = new JarvisOrchestrator({
         config,
@@ -43,6 +47,7 @@ export function createTestStack(env: Record<string, string> = {}) {
         models,
         agents,
     });
+    automation.setOrchestrator(orchestrator);
 
-    return { config, logger, persistence, models, memory, agents, tools, toolRouter, orchestrator };
+    return { config, logger, persistence, models, memory, automation, agents, tools, toolRouter, orchestrator };
 }

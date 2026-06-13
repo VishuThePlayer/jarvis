@@ -6,7 +6,7 @@ import { createTestStack } from "./helpers.js";
 function createServer() {
     const stack = createTestStack({
         ENABLE_HTTP: "true",
-        WEB_APP_ORIGIN: "http://localhost:5173",
+        HTTP_ALLOWED_ORIGIN: "http://localhost:5173",
     });
     const config = { ...stack.config, app: { ...stack.config.app, port: 0 } };
     const server = new HttpServer({ config, logger: stack.logger, orchestrator: stack.orchestrator });
@@ -28,7 +28,7 @@ function getServerPort(server: HttpServer) {
     return address.port;
 }
 
-test("http server exposes API routes and allows the configured web origin", async (t) => {
+test("http server exposes API routes and allows the configured origin", async (t) => {
     const { server, persistence } = createServer();
 
     await server.start();

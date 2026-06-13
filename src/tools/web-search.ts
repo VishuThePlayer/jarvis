@@ -3,6 +3,7 @@ import type { Logger } from "../observability/logger.js";
 import type { ToolCallRecord, UserRequest } from "../types/core.js";
 import { errorMessage } from "../utils/error.js";
 import { truncate } from "../utils/text.js";
+import { createToolInput } from "../utils/tool-input.js";
 import { createToolRecord } from "../utils/tool-record.js";
 
 interface WebSearchToolDependencies {
@@ -76,7 +77,7 @@ export class WebSearchTool {
     }
 
     public async execute(query: string): Promise<ToolCallRecord> {
-        const createdAt = new Date();
+        const input = createToolInput("pre-model-tool", query, { query });
 
         try {
             const url = new URL("https://api.duckduckgo.com/");
@@ -109,11 +110,11 @@ export class WebSearchTool {
                     ? `Web search results for "${query}":\n${bullets.map((bullet) => `- ${bullet}`).join("\n")}`
                     : `No useful web search results were found for "${query}".`;
 
-            return createToolRecord("web-search", query, true, output);
+            return createToolRecord("web-search", input, true, output);
         } catch (error) {
             const msg = errorMessage(error);
             this.logger.warn("Web search failed", { query, error: msg });
-            return createToolRecord("web-search", query, false, `Web search failed for "${query}": ${msg}`);
+            return createToolRecord("web-search", input, false, `Web search failed for "${query}": ${msg}`);
         }
     }
 }

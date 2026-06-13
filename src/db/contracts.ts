@@ -1,4 +1,6 @@
 import type {
+    AutomationRun,
+    AutomationTask,
     ChannelKind,
     ConversationRecord,
     ConversationSummary,
@@ -44,4 +46,17 @@ export interface MemoryRepository {
     listByUser(userId: string): Promise<MemoryEntry[]>;
     touch(memoryId: string, accessedAt: Date): Promise<void>;
     searchByEmbedding?(userId: string, embedding: number[], limit: number): Promise<Array<{ entry: MemoryEntry; similarity: number }>>;
+}
+
+export interface AutomationRepository {
+    createTask(task: AutomationTask): Promise<void>;
+    getTask(taskId: string): Promise<AutomationTask | null>;
+    listTasksByUser(userId: string, includeInactive?: boolean): Promise<AutomationTask[]>;
+    listRunsByTask(taskId: string): Promise<AutomationRun[]>;
+    getDueTasks(now: Date, limit: number): Promise<AutomationTask[]>;
+    saveRun(run: AutomationRun): Promise<void>;
+    rescheduleTask(taskId: string, nextRunAt: Date, lastRunAt: Date): Promise<void>;
+    completeTask(taskId: string, completedAt: Date): Promise<void>;
+    failTask(taskId: string, failedAt: Date, error: string): Promise<void>;
+    cancelTask(userId: string, taskId: string, canceledAt: Date): Promise<boolean>;
 }

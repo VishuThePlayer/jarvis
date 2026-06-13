@@ -1,37 +1,15 @@
 import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
-import type { ToolCallRecord, UserRequest } from "../types/core.js";
+import type { ChannelKind, ToolCallRecord, UserRequest } from "../types/core.js";
+import { getDirectCommandArgText } from "../utils/direct-command.js";
 import { keywordOverlapScore, normalizeWhitespace, tokenize } from "../utils/text.js";
+import { createToolInput } from "../utils/tool-input.js";
 import { createToolRecord } from "../utils/tool-record.js";
-import type { CommandToolDescriptor } from "./contracts.js";
+import type { CommandToolDescriptor, CommandToolInvocation } from "./contracts.js";
 
 interface TimeToolDependencies {
     config: AppConfig;
     logger: Logger;
-}
-
-const COMMAND_RE = /^\/\/time(?:\s+(.+))?$/i;
-
-const TIME_PHRASES_RE =
-    /\b(?:what\s*time\s+is\s+it|what(?:'|')?s?\s+the\s+time|current\s+time|time\s+now|tell\s+me\s+(?:the\s+)?time)\b/i;
-
-export function extractTimeIntent(message: string): { place?: string } | null {
-    const cleaned = message.trim();
-    if (!cleaned) return null;
-
-    const placeMatch =
-        cleaned.match(new RegExp(TIME_PHRASES_RE.source + "\\s*(?:in|at)\\s+(.+)$", "i")) ??
-        cleaned.match(/\btime\b\s*(?:in|at)\s+(.+)$/i);
-
-    if (placeMatch?.[1]) {
-        const place = placeMatch[1].trim().replace(/^[\s:,-]+/, "").replace(/[?.!]+$/, "").trim();
-        return place ? { place } : {};
-    }
-
-    if (/^\s*time(?:\s+(?:please|pls))?\s*[?.!]?\s*$/i.test(cleaned)) return {};
-    if (TIME_PHRASES_RE.test(cleaned)) return {};
-
-    return null;
 }
 
 interface GeoResult {
@@ -68,10 +46,11 @@ export class TimeTool {
     public describe(): CommandToolDescriptor {
         return {
             name: "time",
-            description: "Return server local time, UTC time, or time in a given place.",
-            command: "//time",
+            description:
+                "Get the current time locally or for a city/place. Use this for direct time requests such as 'what time is it in Boston'.",
+            command: "time",
             argsHint: "[place]",
-            examples: ["//time", "//time Boston, MA"],
+            examples: ["time", "time Boston, MA"],
             autoRoute: true,
             parameters: {
                 type: "object",
@@ -86,21 +65,31 @@ export class TimeTool {
         };
     }
 
-    public shouldRun(request: UserRequest): boolean {
-        if (!this.config.tools.time.enabled) return false;
-        if (!this.config.tools.time.perChannel[request.channel]) return false;
-
-        const message = request.message.trim();
-        return COMMAND_RE.test(message) || extractTimeIntent(message) != null;
+    public isEnabled(channel: ChannelKind): boolean {
+        return this.config.tools.time.enabled && this.config.tools.time.perChannel[channel];
     }
 
-    public async execute(message: string): Promise<ToolCallRecord> {
-        const input = message.trim();
-        const place = this.parsePlace(message);
-
-        if (place === undefined) {
-            return this.record(input, false, "No recognized time command.");
+    public matchDirectInvocation(request: UserRequest): CommandToolInvocation | null {
+        if (!this.isEnabled(request.channel)) {
+            return null;
         }
+
+        const argText = getDirectCommandArgText(request.message, this.describe().command);
+        if (argText == null) {
+            return null;
+        }
+
+        const place = this.cleanPlace(argText);
+        return {
+            request,
+            source: "direct-command",
+            arguments: place ? { place } : {},
+        };
+    }
+
+    public async execute(invocation: CommandToolInvocation): Promise<ToolCallRecord> {
+        const place = this.readPlace(invocation.arguments);
+        const input = createToolInput(invocation.source, invocation.request.message, place ? { place } : {});
 
         try {
             const now = new Date();
@@ -116,7 +105,7 @@ export class TimeTool {
             }
 
             if (resolved.kind === "ambiguous") {
-                const suggestions = resolved.options.slice(0, 3).map((o) => `- //time ${o.label}`).join("\n");
+                const suggestions = resolved.options.slice(0, 3).map((o) => `- time ${o.label}`).join("\n");
                 return this.record(input, false, `Ambiguous: "${resolved.query}". Did you mean:\n${suggestions}`);
             }
 
@@ -129,22 +118,13 @@ export class TimeTool {
         }
     }
 
-    private record(input: string, success: boolean, output: string) {
+    private record(input: ReturnType<typeof createToolInput>, success: boolean, output: string) {
         return createToolRecord("time", input, success, output);
     }
 
-    private parsePlace(message: string): string | null | undefined {
-        const trimmed = message.trim();
-
-        const cmdMatch = trimmed.match(COMMAND_RE);
-        if (cmdMatch) {
-            return this.cleanPlace(cmdMatch[1]);
-        }
-
-        const intent = extractTimeIntent(trimmed);
-        if (!intent) return undefined;
-
-        return this.cleanPlace(intent.place);
+    private readPlace(args: Record<string, unknown>): string | null {
+        const raw = args.place;
+        return typeof raw === "string" ? this.cleanPlace(raw) : null;
     }
 
     private cleanPlace(raw: string | undefined): string | null {

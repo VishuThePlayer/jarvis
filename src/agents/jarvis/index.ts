@@ -1,5 +1,5 @@
 import type { AppConfig } from "../../config/index.js";
-import type { MemoryContext } from "../../memory/service.js";
+import type { MemoryContext } from "../../memory/provider.js";
 import type {
     ConversationRecord,
     MessageRecord,
@@ -32,21 +32,29 @@ export class JarvisAgent implements AssistantAgent {
     }
 
     public async prepareInvocation(context: AgentTurnContext): Promise<ModelInvocation> {
+        const toolNames = Object.keys(this.config.tools)
+            .filter((name) => name !== "toolRouter")
+            .join(", ");
+
         const systemSections = [
-            "You are Jarvis-a capable, personable AI assistant. Sound warm and human: conversational but clear, thoughtful without waffle. Aim to feel like a sharp friend who genuinely wants to help.",
-            "Show intelligence by reading the user's intent (not only their literal words). Offer structured answers when topics are complex-short headings or bullets help-while staying easy to skim. When something is ambiguous, ask one concise clarifying question instead of guessing.",
-            "Honor long-term preferences and continuity from memories and summaries when they're provided.",
-            `You're speaking on channel "${context.request.channel}" (conversation ${context.conversation.id}). Adapt warmth and voice to the medium without losing clarity.`,
+            "You are Jarvis, a capable and practical assistant. Be clear, calm, and conversational.",
+            "Read intent, not just literal wording. Use short headings or bullets when they help. If you are missing a key detail, ask one concise question.",
+            `You are replying on channel "${context.request.channel}". Match the tone and formatting to that channel.`,
             channelFormattingSystemPrompt(context.request.channel),
-            'When "Tool results from this turn" appear below, treat them as trustworthy fresh context-weave them into your reply naturally (e.g., times, places, search snippets). Never contradict tool output that is present.',
+            `Available tools: ${toolNames}. Some may already have run for this turn. If you see "Tool results from this turn" below, treat those results as facts and use them directly. Do not discuss routing or internal mechanics unless the user asks.`,
+            "Files and folders: do not force the user to paste full Windows paths unless nothing else will work. Use the available folder and search context to infer likely paths first, then ask one short clarification if needed.",
+            "Never claim you cannot access the user's files when tool results or folder tools are available. Ask a short clarification instead of giving a generic refusal.",
+            "Honor long-term preferences and memories when they are provided.",
         ];
 
-        systemSections.push(
-            'Tools may run automatically before you respond. Do not mention tool access or tool limitations unless the user asks directly. If tool output is present below, treat it as ground truth and incorporate it.',
-        );
-
         if (context.memoryContext.summary) {
-            systemSections.push(`Conversation summary:\n${context.memoryContext.summary.content}`);
+            systemSections.push(
+                `${context.memoryContext.summaryLabel ?? "Conversation summary"}:\n${context.memoryContext.summary.content}`,
+            );
+        }
+
+        if (context.memoryContext.contextBlock) {
+            systemSections.push(`Long-term memory context:\n${context.memoryContext.contextBlock}`);
         }
 
         if (context.memoryContext.entries.length > 0) {
@@ -60,7 +68,10 @@ export class JarvisAgent implements AssistantAgent {
         if (context.toolCalls.length > 0) {
             systemSections.push(
                 `Tool results from this turn:\n${context.toolCalls
-                    .map((toolCall) => `- ${truncate(toolCall.output, 220)}`)
+                    .map((toolCall) => {
+                        const cap = toolCall.name === "ps-folder" ? 16_000 : 220;
+                        return `- ${truncate(toolCall.output, cap)}`;
+                    })
                     .join("\n")}`,
             );
         }

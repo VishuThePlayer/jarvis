@@ -17,6 +17,11 @@ const openaiProviderSchema = z.object({
     baseUrl: z.string().default("https://api.openai.com/v1"),
 });
 
+const zepProviderSchema = z.object({
+    apiKey: z.string().default(""),
+    baseUrl: z.string().default("https://api.getzep.com"),
+});
+
 const telegramChannelSchema = z.object({
     enabled: z.boolean().default(false),
     botToken: z.string().default(""),
@@ -39,6 +44,7 @@ const modelsSchema = z.object({
 
 const memorySchema = z.object({
     enabled: z.boolean().default(true),
+    backend: z.enum(["local", "zep"]).default("local"),
     autoStore: z.boolean().default(true),
     retrievalLimit: z.number().int().positive().max(10).default(5),
     summaryTriggerMessages: z.number().int().positive().default(8),
@@ -49,12 +55,25 @@ const orchestratorSchema = z.object({
     historyLimit: z.number().int().positive().max(200).default(50),
 });
 
+const automationSchema = z.object({
+    enabled: z.boolean().default(true),
+    pollIntervalMs: z.number().int().positive().default(30000),
+    maxDuePerTick: z.number().int().positive().max(100).default(5),
+});
+
 const agentConfigSchema = z.looseObject({
     models: z.record(z.string(), z.string()).optional(),
 });
 
 const providersSchema = z.object({
-    openai: openaiProviderSchema.default(() => ({ apiKey: "", baseUrl: "https://api.openai.com/v1" })),
+    openai: openaiProviderSchema.default(() => ({
+        apiKey: "",
+        baseUrl: "https://api.openai.com/v1",
+    })),
+    zep: zepProviderSchema.default(() => ({
+        apiKey: "",
+        baseUrl: "https://api.getzep.com",
+    })),
 });
 
 const channelsSchema = z.object({
@@ -63,15 +82,23 @@ const channelsSchema = z.object({
     telegram: telegramChannelSchema.default(() => ({ enabled: false, botToken: "" })),
 });
 
+const httpSchema = z.object({
+    allowedOrigin: z.string().url().optional(),
+});
+
 const toolsSchema = z.object({
     webSearch: toolWithOptionsSchema.default(() => ({ enabled: true })),
     time: z.boolean().default(true),
     toolRouter: z.boolean().default(true),
+    memoryLookup: z.boolean().default(true),
+    powershell: z.boolean().default(true),
+    automation: z.boolean().default(true),
 });
 
 export const configFileSchema = z.object({
     providers: providersSchema.default(() => ({
         openai: { apiKey: "", baseUrl: "https://api.openai.com/v1" },
+        zep: { apiKey: "", baseUrl: "https://api.getzep.com" },
     })),
     models: modelsSchema.default(() => ({
         default: "gpt-4o",
@@ -85,13 +112,18 @@ export const configFileSchema = z.object({
         http: true,
         telegram: { enabled: false, botToken: "" },
     })),
+    http: httpSchema.default(() => ({})),
     tools: toolsSchema.default(() => ({
         webSearch: { enabled: true },
         time: true,
         toolRouter: true,
+        memoryLookup: true,
+        powershell: true,
+        automation: true,
     })),
     memory: memorySchema.default(() => ({
         enabled: true,
+        backend: "local" as const,
         autoStore: true,
         retrievalLimit: 5,
         summaryTriggerMessages: 8,
@@ -99,6 +131,11 @@ export const configFileSchema = z.object({
     orchestrator: orchestratorSchema.default(() => ({
         temperature: 0.3,
         historyLimit: 50,
+    })),
+    automation: automationSchema.default(() => ({
+        enabled: true,
+        pollIntervalMs: 30000,
+        maxDuePerTick: 5,
     })),
 });
 
@@ -129,6 +166,12 @@ export function configFileToEnvOverrides(config: JarvisConfigFile): Record<strin
     if (config.providers.openai.baseUrl) {
         env.OPENAI_BASE_URL = config.providers.openai.baseUrl;
     }
+    if (config.providers.zep.apiKey) {
+        env.ZEP_API_KEY = config.providers.zep.apiKey;
+    }
+    if (config.providers.zep.baseUrl) {
+        env.ZEP_BASE_URL = config.providers.zep.baseUrl;
+    }
 
     env.DEFAULT_MODEL = config.models.default;
     env.FAST_MODEL = config.models.fast;
@@ -137,6 +180,10 @@ export function configFileToEnvOverrides(config: JarvisConfigFile): Record<strin
 
     env.ENABLE_TERMINAL = String(config.channels.terminal);
     env.ENABLE_HTTP = String(config.channels.http);
+    if (config.http.allowedOrigin) {
+        env.HTTP_ALLOWED_ORIGIN = config.http.allowedOrigin;
+    }
+
     env.ENABLE_TELEGRAM = String(config.channels.telegram.enabled);
     if (config.channels.telegram.botToken) {
         env.TELEGRAM_BOT_TOKEN = config.channels.telegram.botToken;
@@ -157,8 +204,14 @@ export function configFileToEnvOverrides(config: JarvisConfigFile): Record<strin
     }
     env.ENABLE_TIME = String(config.tools.time);
     env.ENABLE_TOOL_ROUTER = String(config.tools.toolRouter);
+    env.ENABLE_MEMORY_LOOKUP = String(config.tools.memoryLookup);
+    env.ENABLE_POWERSHELL = String(config.tools.powershell);
+    env.ENABLE_AUTOMATION = String(config.tools.automation && config.automation.enabled);
+    env.AUTOMATION_POLL_INTERVAL_MS = String(config.automation.pollIntervalMs);
+    env.AUTOMATION_MAX_DUE_PER_TICK = String(config.automation.maxDuePerTick);
 
     env.ENABLE_MEMORY = String(config.memory.enabled);
+    env.MEMORY_BACKEND = config.memory.backend;
     env.AUTO_STORE_MEMORY = String(config.memory.autoStore);
     env.MEMORY_RETRIEVAL_LIMIT = String(config.memory.retrievalLimit);
     env.MEMORY_SUMMARY_TRIGGER_MESSAGES = String(config.memory.summaryTriggerMessages);

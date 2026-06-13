@@ -4,7 +4,10 @@ export type ProviderKind = "openai";
 export type ModelSlot = "default" | "fast" | "reasoning" | "embedding";
 export type ModelCapability = "chat" | "embeddings" | "streaming";
 export type RunStatus = "running" | "completed" | "failed";
-export type MemoryKind = "fact" | "preference" | "episode" | "summary";
+export type MemoryKind = "fact" | "preference" | "episode" | "summary" | "user-input";
+export type AutomationTaskType = "reminder" | "recurring-prompt";
+export type AutomationTaskStatus = "active" | "completed" | "canceled" | "failed";
+export type AutomationRunStatus = "completed" | "failed";
 
 export interface RequestAttachment {
     id: string;
@@ -38,10 +41,18 @@ export interface TokenUsage {
     totalTokens?: number;
 }
 
+export type ToolCallSource = "direct-command" | "tool-router" | "pre-model-tool";
+
+export interface ToolCallInput {
+    source: ToolCallSource;
+    rawMessage: string;
+    arguments: Record<string, unknown>;
+}
+
 export interface ToolCallRecord {
     id: string;
     name: string;
-    input: string;
+    input: ToolCallInput;
     output: string;
     success: boolean;
     createdAt: Date;
@@ -116,6 +127,35 @@ export interface MemoryEntry {
     sourceMessageId?: string;
 }
 
+export interface AutomationTask {
+    id: string;
+    userId: string;
+    channel: ChannelKind;
+    type: AutomationTaskType;
+    title: string;
+    prompt: string;
+    status: AutomationTaskStatus;
+    nextRunAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
+    conversationId?: string;
+    intervalMs?: number;
+    lastRunAt?: Date;
+    error?: string;
+}
+
+export interface AutomationRun {
+    id: string;
+    taskId: string;
+    userId: string;
+    status: AutomationRunStatus;
+    startedAt: Date;
+    completedAt: Date;
+    conversationId?: string;
+    output?: string;
+    error?: string;
+}
+
 export interface ToolParameterDefinition {
     type: "function";
     function: {
@@ -170,8 +210,28 @@ export interface StreamChunk {
     result?: ModelResult;
 }
 
+export type ProgressPhase =
+    | "init"
+    | "command-check"
+    | "tool-router"
+    | "tool-run"
+    | "tool-format"
+    | "pre-model-tools"
+    | "model-generate"
+    | "persist"
+    | "complete";
+
+export interface ProgressEvent {
+    phase: ProgressPhase;
+    message: string;
+    toolName?: string;
+    commandPreview?: string;
+    createdAt: string;
+}
+
 export type StreamEvent =
     | { type: "delta"; text: string }
+    | { type: "progress"; progress: ProgressEvent }
     | { type: "response"; response: AssistantResponse }
     | { type: "error"; error: string }
     | { type: "done" };

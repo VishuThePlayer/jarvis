@@ -1,15 +1,17 @@
 import type { Server } from "node:http";
-import express, { type Request, type Response, type NextFunction } from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
+import type { AutomationService } from "../automation/service.js";
+import type { ChannelAdapter } from "../channels/types.js";
 import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
 import type { Orchestrator } from "../orchestrator/index.js";
-import type { ChannelAdapter } from "../channels/types.js";
 import { createId } from "../utils/id.js";
 
 interface HttpServerDependencies {
     config: AppConfig;
     logger: Logger;
     orchestrator: Orchestrator;
+    automation?: AutomationService;
 }
 
 interface ParsedChatBody {
@@ -24,11 +26,14 @@ interface ParsedChatBody {
 class SlidingWindowRateLimiter {
     private readonly windows = new Map<string, number[]>();
 
-    public isAllowed(key: string, windowMs: number, maxRequests: number): { allowed: boolean; retryAfterMs?: number } {
+    public isAllowed(key: string, windowMs: number, maxRequests: number): {
+        allowed: boolean;
+        retryAfterMs?: number;
+    } {
         const now = Date.now();
         const cutoff = now - windowMs;
         const timestamps = this.windows.get(key) ?? [];
-        const recent = timestamps.filter((t) => t > cutoff);
+        const recent = timestamps.filter((timestamp) => timestamp > cutoff);
 
         if (recent.length >= maxRequests) {
             const oldest = recent[0]!;
@@ -45,6 +50,7 @@ export class HttpServer implements ChannelAdapter {
     private readonly config: AppConfig;
     private readonly logger: Logger;
     private readonly orchestrator: Orchestrator;
+    private readonly automation: AutomationService | undefined;
     private readonly app = express();
     private readonly rateLimiter = new SlidingWindowRateLimiter();
     private server: Server | undefined;
@@ -53,6 +59,7 @@ export class HttpServer implements ChannelAdapter {
         this.config = dependencies.config;
         this.logger = dependencies.logger;
         this.orchestrator = dependencies.orchestrator;
+        this.automation = dependencies.automation;
 
         this.app.use((request, response, next) => {
             this.applyCorsHeaders(request, response);
@@ -112,7 +119,10 @@ export class HttpServer implements ChannelAdapter {
 
     private registerRoutes() {
         this.app.get("/health", (_request, response) => {
-            response.json(this.orchestrator.getHealth());
+            response.json({
+                ...this.orchestrator.getHealth(),
+                ...(this.automation ? { automation: this.automation.getHealth() } : {}),
+            });
         });
 
         const auth = this.createAuthMiddleware();
@@ -149,6 +159,44 @@ export class HttpServer implements ChannelAdapter {
         this.app.post("/chat/stream", auth, async (request, response) => {
             await this.handleStreamRequest(request, response);
         });
+
+        this.app.get("/automations", auth, async (request, response) => {
+            if (!this.automation) {
+                response.status(404).json({ error: "Automation is not available." });
+                return;
+            }
+
+            const userId = this.readQueryString(request.query.userId) ?? this.config.app.defaultUserId;
+            const includeInactive = request.query.includeInactive === "true";
+            const tasks = await this.automation.listTasks(userId, includeInactive);
+            response.json({ tasks });
+        });
+
+        this.app.get("/automations/:id/runs", auth, async (request: Request<{ id: string }>, response: Response) => {
+            if (!this.automation) {
+                response.status(404).json({ error: "Automation is not available." });
+                return;
+            }
+
+            const runs = await this.automation.listRuns(request.params.id);
+            response.json({ runs });
+        });
+
+        this.app.delete("/automations/:id", auth, async (request: Request<{ id: string }>, response: Response) => {
+            if (!this.automation) {
+                response.status(404).json({ error: "Automation is not available." });
+                return;
+            }
+
+            const userId = this.readQueryString(request.query.userId) ?? this.config.app.defaultUserId;
+            const canceled = await this.automation.cancelTask(userId, request.params.id);
+            if (!canceled) {
+                response.status(404).json({ error: "Active automation task not found." });
+                return;
+            }
+
+            response.json({ canceled: true });
+        });
     }
 
     private createAuthMiddleware(): (req: Request, res: Response, next: NextFunction) => void {
@@ -161,13 +209,13 @@ export class HttpServer implements ChannelAdapter {
 
             const header = req.headers.authorization;
             if (!header || !header.startsWith("Bearer ")) {
-                res.status(401).json({ error: "Unauthorized — provide Authorization: Bearer <API_KEY>" });
+                res.status(401).json({ error: "Unauthorized - provide Authorization: Bearer <API_KEY>" });
                 return;
             }
 
             const token = header.slice(7);
             if (token !== expectedKey) {
-                res.status(401).json({ error: "Unauthorized — invalid API key" });
+                res.status(401).json({ error: "Unauthorized - invalid API key" });
                 return;
             }
 
@@ -214,7 +262,7 @@ export class HttpServer implements ChannelAdapter {
 
         if (!allowed) {
             response.setHeader("Retry-After", String(Math.ceil((retryAfterMs ?? 1000) / 1000)));
-            response.status(429).json({ error: "Too many requests — try again later." });
+            response.status(429).json({ error: "Too many requests - try again later." });
             return null;
         }
 
@@ -223,7 +271,9 @@ export class HttpServer implements ChannelAdapter {
 
     private async handleChatRequest(request: Request, response: Response) {
         const parsedBody = this.validateAndRateLimit(request, response);
-        if (!parsedBody) return;
+        if (!parsedBody) {
+            return;
+        }
 
         try {
             const result = await this.orchestrator.handleRequest(this.buildUserRequest(parsedBody));
@@ -236,7 +286,9 @@ export class HttpServer implements ChannelAdapter {
 
     private async handleStreamRequest(request: Request, response: Response) {
         const parsedBody = this.validateAndRateLimit(request, response);
-        if (!parsedBody) return;
+        if (!parsedBody) {
+            return;
+        }
 
         response.setHeader("Content-Type", "text/event-stream");
         response.setHeader("Cache-Control", "no-cache");
@@ -252,9 +304,14 @@ export class HttpServer implements ChannelAdapter {
             const userRequest = this.buildUserRequest(parsedBody);
 
             for await (const event of this.orchestrator.handleRequestStream(userRequest)) {
-                if (clientDisconnected) break;
+                if (clientDisconnected) {
+                    break;
+                }
 
                 switch (event.type) {
+                    case "progress":
+                        response.write(`event: progress\ndata: ${JSON.stringify(event.progress)}\n\n`);
+                        break;
                     case "delta":
                         response.write(`event: delta\ndata: ${JSON.stringify({ text: event.text })}\n\n`);
                         break;
@@ -291,14 +348,17 @@ export class HttpServer implements ChannelAdapter {
 
         const trimmed = candidate.message.trim();
         if (trimmed.length > this.config.app.maxMessageLength) {
-            throw new Error(`Message too long (${trimmed.length} chars). Maximum is ${this.config.app.maxMessageLength}.`);
+            throw new Error(
+                `Message too long (${trimmed.length} chars). Maximum is ${this.config.app.maxMessageLength}.`,
+            );
         }
 
         return {
             message: trimmed,
-            userId: typeof candidate.userId === "string" && candidate.userId.trim().length > 0
-                ? candidate.userId.trim()
-                : this.config.app.defaultUserId,
+            userId:
+                typeof candidate.userId === "string" && candidate.userId.trim().length > 0
+                    ? candidate.userId.trim()
+                    : this.config.app.defaultUserId,
             ...(typeof candidate.conversationId === "string" && candidate.conversationId.trim().length > 0
                 ? { conversationId: candidate.conversationId.trim() }
                 : {}),
@@ -315,7 +375,7 @@ export class HttpServer implements ChannelAdapter {
     }
 
     private applyCorsHeaders(request: Request, response: Response) {
-        const allowedOrigin = this.config.web.appOrigin;
+        const allowedOrigin = this.config.http.allowedOrigin;
         const requestOrigin = request.headers.origin;
 
         if (!allowedOrigin || requestOrigin !== allowedOrigin) {
@@ -323,8 +383,12 @@ export class HttpServer implements ChannelAdapter {
         }
 
         response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-        response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+        response.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
         response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
         response.setHeader("Vary", "Origin");
+    }
+
+    private readQueryString(value: unknown): string | null {
+        return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
     }
 }

@@ -2,6 +2,8 @@ import { Pool } from "pg";
 import type { AppConfig } from "../../config/index.js";
 import type { Logger } from "../../observability/logger.js";
 import type {
+    AutomationRun,
+    AutomationTask,
     ConversationRecord,
     ConversationSummary,
     MemoryEntry,
@@ -11,7 +13,12 @@ import type {
 } from "../../types/core.js";
 import { errorMessage } from "../../utils/error.js";
 import { createId } from "../../utils/id.js";
-import type { ConversationRepository, MemoryRepository, RunRepository } from "../contracts.js";
+import type {
+    AutomationRepository,
+    ConversationRepository,
+    MemoryRepository,
+    RunRepository,
+} from "../contracts.js";
 
 const SCHEMA_SQL = `
 create table if not exists conversations (
@@ -77,6 +84,40 @@ create table if not exists memory_entries (
 );
 
 create index if not exists idx_memory_entries_user_created_at on memory_entries (user_id, created_at desc);
+
+create table if not exists automation_tasks (
+    id text primary key,
+    user_id text not null,
+    channel text not null,
+    conversation_id text,
+    type text not null,
+    title text not null,
+    prompt text not null,
+    status text not null,
+    next_run_at timestamptz not null,
+    interval_ms bigint,
+    last_run_at timestamptz,
+    error text,
+    created_at timestamptz not null,
+    updated_at timestamptz not null
+);
+
+create index if not exists idx_automation_tasks_user_status on automation_tasks (user_id, status, next_run_at);
+create index if not exists idx_automation_tasks_due on automation_tasks (status, next_run_at);
+
+create table if not exists automation_runs (
+    id text primary key,
+    task_id text not null references automation_tasks(id) on delete cascade,
+    user_id text not null,
+    conversation_id text,
+    status text not null,
+    output text,
+    error text,
+    started_at timestamptz not null,
+    completed_at timestamptz not null
+);
+
+create index if not exists idx_automation_runs_task_started_at on automation_runs (task_id, started_at desc);
 `;
 
 interface CreatePostgresPersistenceInput {
@@ -612,17 +653,267 @@ export class PostgresMemoryRepository implements MemoryRepository {
     }
 }
 
+export class PostgresAutomationRepository implements AutomationRepository {
+    private readonly pool: Pool;
+
+    public constructor(pool: Pool) {
+        this.pool = pool;
+    }
+
+    public async createTask(task: AutomationTask): Promise<void> {
+        await this.pool.query(
+            `
+            insert into automation_tasks
+                (id, user_id, channel, conversation_id, type, title, prompt, status, next_run_at,
+                 interval_ms, last_run_at, error, created_at, updated_at)
+            values
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            `,
+            [
+                task.id,
+                task.userId,
+                task.channel,
+                task.conversationId ?? null,
+                task.type,
+                task.title,
+                task.prompt,
+                task.status,
+                task.nextRunAt,
+                task.intervalMs ?? null,
+                task.lastRunAt ?? null,
+                task.error ?? null,
+                task.createdAt,
+                task.updatedAt,
+            ],
+        );
+    }
+
+    public async getTask(taskId: string): Promise<AutomationTask | null> {
+        const result = await this.pool.query(
+            `
+            select id, user_id, channel, conversation_id, type, title, prompt, status, next_run_at,
+                   interval_ms, last_run_at, error, created_at, updated_at
+            from automation_tasks
+            where id = $1
+            `,
+            [taskId],
+        );
+
+        if (result.rowCount === 0) {
+            return null;
+        }
+
+        return this.mapTaskRow(result.rows[0]);
+    }
+
+    public async listTasksByUser(userId: string, includeInactive = false): Promise<AutomationTask[]> {
+        const result = await this.pool.query(
+            `
+            select id, user_id, channel, conversation_id, type, title, prompt, status, next_run_at,
+                   interval_ms, last_run_at, error, created_at, updated_at
+            from automation_tasks
+            where user_id = $1 and ($2::boolean or status = 'active')
+            order by next_run_at asc
+            `,
+            [userId, includeInactive],
+        );
+
+        return result.rows.map((row: Record<string, unknown>) => this.mapTaskRow(row));
+    }
+
+    public async listRunsByTask(taskId: string): Promise<AutomationRun[]> {
+        const result = await this.pool.query(
+            `
+            select id, task_id, user_id, conversation_id, status, output, error, started_at, completed_at
+            from automation_runs
+            where task_id = $1
+            order by started_at desc
+            `,
+            [taskId],
+        );
+
+        return result.rows.map((row: Record<string, unknown>) => this.mapRunRow(row));
+    }
+
+    public async getDueTasks(now: Date, limit: number): Promise<AutomationTask[]> {
+        if (limit <= 0) {
+            return [];
+        }
+
+        const result = await this.pool.query(
+            `
+            select id, user_id, channel, conversation_id, type, title, prompt, status, next_run_at,
+                   interval_ms, last_run_at, error, created_at, updated_at
+            from automation_tasks
+            where status = 'active' and next_run_at <= $1
+            order by next_run_at asc
+            limit $2
+            `,
+            [now, limit],
+        );
+
+        return result.rows.map((row: Record<string, unknown>) => this.mapTaskRow(row));
+    }
+
+    public async saveRun(run: AutomationRun): Promise<void> {
+        await this.pool.query(
+            `
+            insert into automation_runs
+                (id, task_id, user_id, conversation_id, status, output, error, started_at, completed_at)
+            values
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `,
+            [
+                run.id,
+                run.taskId,
+                run.userId,
+                run.conversationId ?? null,
+                run.status,
+                run.output ?? null,
+                run.error ?? null,
+                run.startedAt,
+                run.completedAt,
+            ],
+        );
+    }
+
+    public async rescheduleTask(taskId: string, nextRunAt: Date, lastRunAt: Date): Promise<void> {
+        await this.pool.query(
+            `
+            update automation_tasks
+            set next_run_at = $2,
+                last_run_at = $3,
+                updated_at = $3,
+                error = null
+            where id = $1
+            `,
+            [taskId, nextRunAt, lastRunAt],
+        );
+    }
+
+    public async completeTask(taskId: string, completedAt: Date): Promise<void> {
+        await this.updateTaskStatus(taskId, "completed", completedAt, null);
+    }
+
+    public async failTask(taskId: string, failedAt: Date, error: string): Promise<void> {
+        await this.updateTaskStatus(taskId, "failed", failedAt, error);
+    }
+
+    public async cancelTask(userId: string, taskId: string, canceledAt: Date): Promise<boolean> {
+        const result = await this.pool.query(
+            `
+            update automation_tasks
+            set status = 'canceled',
+                updated_at = $3
+            where id = $1 and user_id = $2 and status = 'active'
+            `,
+            [taskId, userId, canceledAt],
+        );
+
+        return Boolean(result.rowCount && result.rowCount > 0);
+    }
+
+    private async updateTaskStatus(
+        taskId: string,
+        status: AutomationTask["status"],
+        updatedAt: Date,
+        error: string | null,
+    ): Promise<void> {
+        await this.pool.query(
+            `
+            update automation_tasks
+            set status = $2,
+                last_run_at = $3,
+                updated_at = $3,
+                error = $4
+            where id = $1
+            `,
+            [taskId, status, updatedAt, error],
+        );
+    }
+
+    private mapTaskRow(row: Record<string, unknown>): AutomationTask {
+        const typed = row as {
+            id: string;
+            user_id: string;
+            channel: AutomationTask["channel"];
+            conversation_id: string | null;
+            type: AutomationTask["type"];
+            title: string;
+            prompt: string;
+            status: AutomationTask["status"];
+            next_run_at: string;
+            interval_ms: string | number | null;
+            last_run_at: string | null;
+            error: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+
+        const task: AutomationTask = {
+            id: typed.id,
+            userId: typed.user_id,
+            channel: typed.channel,
+            type: typed.type,
+            title: typed.title,
+            prompt: typed.prompt,
+            status: typed.status,
+            nextRunAt: toDate(typed.next_run_at),
+            createdAt: toDate(typed.created_at),
+            updatedAt: toDate(typed.updated_at),
+        };
+
+        if (typed.conversation_id) task.conversationId = typed.conversation_id;
+        if (typed.interval_ms != null) task.intervalMs = Number(typed.interval_ms);
+        if (typed.last_run_at) task.lastRunAt = toDate(typed.last_run_at);
+        if (typed.error) task.error = typed.error;
+
+        return task;
+    }
+
+    private mapRunRow(row: Record<string, unknown>): AutomationRun {
+        const typed = row as {
+            id: string;
+            task_id: string;
+            user_id: string;
+            conversation_id: string | null;
+            status: AutomationRun["status"];
+            output: string | null;
+            error: string | null;
+            started_at: string;
+            completed_at: string;
+        };
+
+        const run: AutomationRun = {
+            id: typed.id,
+            taskId: typed.task_id,
+            userId: typed.user_id,
+            status: typed.status,
+            startedAt: toDate(typed.started_at),
+            completedAt: toDate(typed.completed_at),
+        };
+
+        if (typed.conversation_id) run.conversationId = typed.conversation_id;
+        if (typed.output) run.output = typed.output;
+        if (typed.error) run.error = typed.error;
+
+        return run;
+    }
+}
+
 export class PostgresPersistence {
     private readonly pool: Pool;
     public readonly conversations: ConversationRepository;
     public readonly runs: RunRepository;
     public readonly memories: MemoryRepository;
+    public readonly automations: AutomationRepository;
 
     public constructor(pool: Pool) {
         this.pool = pool;
         this.conversations = new PostgresConversationRepository(pool);
         this.runs = new PostgresRunRepository(pool);
         this.memories = new PostgresMemoryRepository(pool);
+        this.automations = new PostgresAutomationRepository(pool);
     }
 
     public async stop(): Promise<void> {
@@ -644,4 +935,3 @@ export async function createPostgresPersistence(input: CreatePostgresPersistence
 
     return new PostgresPersistence(pool);
 }
-
